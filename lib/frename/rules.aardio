@@ -1,0 +1,488 @@
+// frename.rules —— 六类命名规则的纯逻辑实现
+//
+// 职责：接收"文件名字符串 + 规则参数"，返回"新文件名字符串"。
+// 本文件不读取、创建、修改、移动或删除任何真实文件，也不接触界面。
+//
+// 每个规则函数的返回值约定：
+//   成功：返回新文件名（可能是空字符串）
+//   失败：返回 null, 错误描述
+//
+// 行为依据（旧版 Wails/Go 项目，只读参考，未修改）：
+//   add_text      backend/pkg/rename/rules/add_text.go      AddTextRule.Apply
+//   replace       backend/pkg/rename/rules/replace.go       ReplaceRule.Apply
+//   regex_replace backend/pkg/rename/rules/regex_replace.go RegexReplaceRule.Apply
+//   case_convert  backend/pkg/rename/rules/case_convert.go  CaseConvertRule.Apply
+//   sequence      backend/pkg/rename/rules/sequence.go      SequenceRule.Apply / FormatSequence
+//   date_time     backend/pkg/rename/rules/date_time.go     DateTimeRule.Apply / FormatDateTime
+//   参数解析      backend/app.go                            App.AddRule / App.UpdateRule
+//   默认值        frontend/src/stores/rule.ts               getDefaultParams
+
+import preg;
+import frename.nameutil;
+
+namespace frename.rules{
+
+	//---------- 参数读取 ----------
+
+	//读取规则参数；rule.params 缺失或成员缺失时返回默认值
+	//默认值取自 frontend/src/stores/rule.ts 的 getDefaultParams
+	getParam = function(rule,key,defaultValue){
+		if(type(rule) != "table") return defaultValue;
+
+		var p = rule.params;
+		if(type(p) != "table") return defaultValue;
+
+		var v = p[key];
+		if(v === null) return defaultValue;
+		return v;
+	}
+
+	numParam = function(rule,key,defaultValue){
+		var v = ..frename.rules.getParam(rule,key,defaultValue);
+		var n = tonumber(v);
+		if(n === null) return defaultValue;
+		return ..math.floor(n);
+	}
+
+	strParam = function(rule,key,defaultValue){
+		var v = ..frename.rules.getParam(rule,key,defaultValue);
+		if(type(v) == "string") return v;
+		if(v === null) return defaultValue;
+		return tostring(v);
+	}
+
+	boolParam = function(rule,key){
+		var v = ..frename.rules.getParam(rule,key,false);
+		return (v == true);
+	}
+
+	//---------- 枚举解析（与旧版 Go 的 Parse* 函数一一对应）----------
+
+	//rules/add_text.go ParseAddPosition
+	//注意：未知值一律回退为 prefix，因此旧版 default 分支的"无效的添加位置"错误永远不会被触发
+	parseAddPosition = function(pos){
+		var s = ..string.lower( tostring(pos) );
+		if(s == "prefix" || s == "前缀") return "prefix";
+		if(s == "suffix" || s == "后缀") return "suffix";
+		if(s == "custom" || s == "指定位置") return "custom";
+		return "prefix";
+	}
+
+	//rules/sequence.go ParsePosition
+	parsePosition = function(pos){
+		if(tostring(pos) == "start") return "start";
+		return "end";
+	}
+
+	//rules/date_time.go ParseFormat
+	parseFormat = function(format){
+		var s = tostring(format);
+		if(s == "20060102") return s;
+		if(s == "2006-01-02") return s;
+		if(s == "200601021504") return s;
+		return "20060102";
+	}
+
+	//rules/replace.go ParseReplaceScope（未知值回退为 all）
+	parseReplaceScope = function(scope){
+		var s = tostring(scope);
+		if(s == "all") return s;
+		if(s == "first_n") return s;
+		if(s == "last_n") return s;
+		if(s == "after_pos") return s;
+		if(s == "after_char") return s;
+		if(s == "before_char") return s;
+		if(s == "after_char_n") return s;
+		if(s == "before_char_n") return s;
+		return "all";
+	}
+
+	//---------- 一、添加字符 add_text ----------
+
+	applyAddText = function(rule,name){
+		if(!rule.enabled) return name;
+
+		var text = ..frename.rules.strParam(rule,"text","");
+		if(!#text) return name;					//rules/add_text.go：text 为空直接返回原名
+
+		var stem,ext = ..frename.nameutil.splitExt(name);
+		var pos = ..frename.rules.parseAddPosition( ..frename.rules.strParam(rule,"addPosition","") );
+
+		if(pos == "prefix") return text ++ stem ++ ext;
+		if(pos == "suffix") return stem ++ text ++ ext;
+
+		//custom：按字符插入，位置先收敛到 [0, 字符数]
+		var n = ..frename.rules.numParam(rule,"customPosition",0);
+		if(n < 0) n = 0;
+		var cnt = ..frename.nameutil.charCount(stem);
+		if(n > cnt) n = cnt;
+
+		return ..frename.nameutil.midChars(stem,0,n)
+			++ text
+			++ ..frename.nameutil.tailChars(stem,n)
+			++ ext;
+	}
+
+	//---------- 二、文本替换 replace ----------
+
+	//忽略大小写的全量替换
+	//
+	//旧版 Go 的写法是"每次从 0 重新查找并替换"，当替换文本自身又包含查找文本时（例如
+	//oldText="a", newText="A" 且忽略大小写）会陷入死循环。这里改为从左向右推进式替换：
+	//所有能终止的输入结果与旧版一致，同时避免旧版的死循环分支。
+	replaceIgnoreCase = function(s,oldText,newText){
+		var lowerS = ..string.lower(s);
+		var lowerOld = ..string.lower(oldText);
+		if(!#lowerOld) return s;
+
+		var out = "";
+		var i = 1;
+
+		while(i <= #s){
+			var p = ..string.indexOf(lowerS,lowerOld,i);
+			if(!p) break;
+			out = out ++ ..string.slice(s,i,p-1) ++ newText;
+			i = p + #oldText;
+		}
+
+		if(i <= #s) out = out ++ ..string.right(s,-i);
+		return out;
+	}
+
+	applyReplace = function(rule,name){
+		if(!rule.enabled) return name;
+
+		var stem,ext;
+		var cnt;
+		var idx;
+		var ci;
+		var start;
+		var newText = ..frename.rules.strParam(rule,"newText","");
+		var scope = ..frename.rules.parseReplaceScope( ..frename.rules.strParam(rule,"replaceScope","") );
+		var n = ..frename.rules.numParam(rule,"scopeParam1",0);
+		var p2 = ..frename.rules.strParam(rule,"scopeParam2","");
+
+		//以下范围分支不使用 oldText，直接按位置改写，与 rules/replace.go 的 switch 一致
+		if(scope == "first_n"){
+			if(n <= 0) return name;
+			stem,ext = ..frename.nameutil.splitExt(name);
+			cnt = ..frename.nameutil.charCount(stem);
+			if(n >= cnt) return newText ++ ext;
+			return newText ++ ..frename.nameutil.tailChars(stem,n) ++ ext;
+		}
+
+		if(scope == "last_n"){
+			if(n <= 0) return name;
+			stem,ext = ..frename.nameutil.splitExt(name);
+			cnt = ..frename.nameutil.charCount(stem);
+			if(n >= cnt) return newText ++ ext;
+			return ..frename.nameutil.midChars(stem,0,cnt-n) ++ newText ++ ext;
+		}
+
+		if(scope == "after_pos"){
+			var pos = ..frename.rules.numParam(rule,"scopeParam2",0);
+			if(pos < 0) pos = 0;
+
+			stem,ext = ..frename.nameutil.splitExt(name);
+			cnt = ..frename.nameutil.charCount(stem);
+			if(pos >= cnt) return name;
+			if(n <= 0) return ..frename.nameutil.midChars(stem,0,pos) ++ newText ++ ext;
+			if(pos + n >= cnt) return ..frename.nameutil.midChars(stem,0,pos) ++ newText ++ ext;
+
+			return ..frename.nameutil.midChars(stem,0,pos)
+				++ newText
+				++ ..frename.nameutil.tailChars(stem,pos+n)
+				++ ext;
+		}
+
+		if(scope == "after_char"){
+			if(!#p2) return name;
+
+			stem,ext = ..frename.nameutil.splitExt(name);
+			idx = ..string.indexOf(stem,p2);
+			if(!idx) return name;					//未找到分隔符：原样返回
+
+			return ..string.left(stem, idx - 1 + #p2) ++ newText ++ ext;
+		}
+
+		if(scope == "before_char"){
+			if(!#p2) return name;
+
+			stem,ext = ..frename.nameutil.splitExt(name);
+			idx = ..string.indexOf(stem,p2);
+			if(!idx) return name;
+
+			return newText ++ ..string.right(stem,-idx) ++ ext;
+		}
+
+		if(scope == "after_char_n"){
+			if(!#p2) return name;
+
+			stem,ext = ..frename.nameutil.splitExt(name);
+			ci = ..frename.nameutil.charIndexOf(stem,p2);
+			if(ci < 0) return name;
+
+			cnt = ..frename.nameutil.charCount(stem);
+			start = ci + ..frename.nameutil.charCount(p2);
+			if(start >= cnt) return stem ++ ext;
+			if(n <= 0) return ..frename.nameutil.midChars(stem,0,start) ++ newText ++ ext;
+			if(start + n >= cnt) return ..frename.nameutil.midChars(stem,0,start) ++ newText ++ ext;
+
+			return ..frename.nameutil.midChars(stem,0,start)
+				++ newText
+				++ ..frename.nameutil.tailChars(stem,start+n)
+				++ ext;
+		}
+
+		if(scope == "before_char_n"){
+			if(!#p2) return name;
+
+			stem,ext = ..frename.nameutil.splitExt(name);
+			ci = ..frename.nameutil.charIndexOf(stem,p2);
+			if(ci < 0) return name;
+
+			if(n <= 0 || ci == 0) return newText ++ ..frename.nameutil.tailChars(stem,ci) ++ ext;
+
+			start = ci - n;
+			if(start < 0) start = 0;
+
+			return ..frename.nameutil.midChars(stem,0,start)
+				++ newText
+				++ ..frename.nameutil.tailChars(stem,ci)
+				++ ext;
+		}
+
+		//scope == all：按查找文本替换，替换范围覆盖完整文件名（含扩展名）
+		var oldText = ..frename.rules.strParam(rule,"oldText","");
+		if(!#oldText) return name;					//rules/replace.go：oldText 为空直接返回原名
+
+		if(..frename.rules.boolParam(rule,"caseSensitive")){
+			//圆括号建立单值表达式：string.replaceLiteral 还会返回替换次数，这里只取新文件名
+			var out = ( ..string.replaceLiteral(name,oldText,newText) );
+			return out;
+		}
+
+		var out2 = ..frename.rules.replaceIgnoreCase(name,oldText,newText);
+		return out2;
+	}
+
+	//---------- 三、正则替换 regex_replace ----------
+
+	applyRegexReplace = function(rule,name){
+		if(!rule.enabled) return name;
+
+		var pattern = ..frename.rules.strParam(rule,"pattern","");
+		if(!#pattern) return name;					//rules/regex_replace.go：pattern 为空直接返回原名
+
+		var replacement = ..frename.rules.strParam(rule,"replacement","");
+
+		//与旧版 Go 一致：不区分大小写时在模式前追加 (?i)
+		var expr = pattern;
+		if(!..frename.rules.boolParam(rule,"caseSensitive")){
+			expr = "(?i)" ++ pattern;
+		}
+
+		//"u" 修饰符：启用 UTF-8 字符计数匹配，与 Go regexp 的默认行为对齐
+		//preg 正常会以 null,err 返回错误；这里再兜一层，避免异常中断整个预览
+		var re,err;
+		try{
+			re,err = ..preg(expr,"u");
+		}
+		catch(e){
+			err = e;
+		}
+
+		if(!re) return null, "无效的正则表达式: " ++ tostring(err);
+
+		var out = re.replace(name,replacement);
+		re.free();
+
+		return out;
+	}
+
+	//---------- 四、大小写转换 case_convert ----------
+
+	applyCaseConvert = function(rule,name){
+		if(!rule.enabled) return name;
+
+		var stem,ext = ..frename.nameutil.splitExt(name);
+		var ct = ..frename.rules.strParam(rule,"caseType","");
+
+		//upper / lower 会连同扩展名一起转换（旧版 rules/case_convert.go 的行为）
+		if(ct == "upper") return ..string.upper(stem) ++ ..string.upper(ext);
+		if(ct == "lower") return ..string.lower(stem) ++ ..string.lower(ext);
+		if(ct == "first") return ..frename.nameutil.firstUpper(stem) ++ ext;
+		if(ct == "title") return ..frename.nameutil.titleCase(stem) ++ ext;
+
+		//未知 caseType：旧版 switch 的 default 分支，等同于不改写
+		return stem ++ ext;
+	}
+
+	//---------- 五、数字序列 sequence ----------
+
+	//规则本身只写入占位符，真实序号由引擎在预览阶段按文件下标填入
+	applySequence = function(rule,name){
+		if(!rule.enabled) return name;
+
+		var stem,ext = ..frename.nameutil.splitExt(name);
+
+		if(..frename.rules.parsePosition( ..frename.rules.strParam(rule,"position","") ) == "start"){
+			return "{sequence}_" ++ stem ++ ext;
+		}
+
+		return stem ++ "_{sequence}" ++ ext;
+	}
+
+	//rules/sequence.go FormatSequence：num = start + index*step
+	//index 为文件在"已排序列表"中的下标，旧版 Go 数组从 0 开始
+	formatSequence = function(rule,index){
+		var start = ..frename.rules.numParam(rule,"start",0);
+		var step = ..frename.rules.numParam(rule,"step",0);
+		var digits = ..frename.rules.numParam(rule,"digits",0);
+
+		return ..frename.nameutil.padNumber(start + index*step, digits);
+	}
+
+	//---------- 六、日期时间 date_time ----------
+
+	//规则本身只写入占位符，真实日期由引擎在预览阶段按文件修改时间（或当前时间）填入
+	applyDateTime = function(rule,name){
+		if(!rule.enabled) return name;
+
+		var stem,ext = ..frename.nameutil.splitExt(name);
+
+		if(..frename.rules.parsePosition( ..frename.rules.strParam(rule,"position","") ) == "start"){
+			return "{datetime}_" ++ stem ++ ext;
+		}
+
+		return stem ++ "_{datetime}" ++ ext;
+	}
+
+	//rules/date_time.go FormatDateTime：t.Format(format)
+	//Go 的时间格式串用示例时间表示，这里映射为 aardio 的格式化串
+	formatDateTime = function(rule,t){
+		var f = ..frename.rules.parseFormat( ..frename.rules.strParam(rule,"format","") );
+
+		if(f == "2006-01-02") return tostring(t,"%Y-%m-%d");
+		if(f == "200601021504") return tostring(t,"%Y%m%d%H%M");
+		return tostring(t,"%Y%m%d");
+	}
+
+	//---------- 规则描述（与旧版 Go 的 Description() 逐字一致）----------
+
+	description = function(rule){
+		var t = rule.type;
+		if(type(t) != "string") t = "";
+
+		if(t == "add_text"){
+			var text = ..frename.rules.strParam(rule,"text","");
+			var pos = ..frename.rules.parseAddPosition( ..frename.rules.strParam(rule,"addPosition","") );
+			if(pos == "prefix") return "前缀添加: " ++ text;
+			if(pos == "suffix") return "后缀添加: " ++ text;
+			if(pos == "custom") return "位置" ++ tostring(..frename.rules.numParam(rule,"customPosition",0)) ++ "添加: " ++ text;
+			return "添加字符: " ++ text;
+		}
+
+		if(t == "replace"){
+			var caseStr = "";
+			if(!..frename.rules.boolParam(rule,"caseSensitive")) caseStr = "(忽略大小写)";
+			return "文本替换: "
+				++ ..frename.rules.strParam(rule,"oldText","")
+				++ " → "
+				++ ..frename.rules.strParam(rule,"newText","")
+				++ " " ++ caseStr;
+		}
+
+		if(t == "regex_replace"){
+			return "正则替换: "
+				++ ..frename.rules.strParam(rule,"pattern","")
+				++ " → "
+				++ ..frename.rules.strParam(rule,"replacement","");
+		}
+
+		if(t == "case_convert"){
+			var caseDesc;
+			var ct = ..frename.rules.strParam(rule,"caseType","");
+			if(ct == "upper") caseDesc = "全部大写";
+			elseif(ct == "lower") caseDesc = "全部小写";
+			elseif(ct == "first") caseDesc = "首字母大写";
+			elseif(ct == "title") caseDesc = "标题格式";
+			else caseDesc = ct;
+			return "大小写转换: " ++ caseDesc;
+		}
+
+		if(t == "sequence"){
+			var posDesc = "末尾";
+			if(..frename.rules.parsePosition( ..frename.rules.strParam(rule,"position","") ) == "start") posDesc = "开头";
+			return "数字序列: 起始" ++ tostring(..frename.rules.numParam(rule,"start",0))
+				++ ", 步长" ++ tostring(..frename.rules.numParam(rule,"step",0))
+				++ ", 位数" ++ tostring(..frename.rules.numParam(rule,"digits",0))
+				++ ", 位置" ++ posDesc;
+		}
+
+		if(t == "date_time"){
+			var timePosDesc = "末尾";
+			if(..frename.rules.parsePosition( ..frename.rules.strParam(rule,"position","") ) == "start") timePosDesc = "开头";
+
+			var timeDesc = "当前时间";
+			if(..frename.rules.boolParam(rule,"useFileTime")) timeDesc = "文件修改时间";
+
+			return "日期时间: "
+				++ ..frename.rules.parseFormat( ..frename.rules.strParam(rule,"format","") )
+				++ ", 位置" ++ timePosDesc
+				++ ", " ++ timeDesc;
+		}
+
+		return t;
+	}
+
+	//---------- 规则分发 ----------
+
+	//按规则类型调用对应的实现，返回 新文件名 或 null,错误描述
+	//
+	//这里用 v,e 显式接收两个返回值再转交，而不是直接 return f()：
+	//一是保证错误信息一定被传递到第二个返回值，二是把实现函数可能多返回的值截断掉
+	apply = function(rule,name){
+		var t = rule.type;
+		if(type(t) != "string") t = "";
+
+		var v,e;
+
+		if(t == "add_text"){
+			v,e = ..frename.rules.applyAddText(rule,name);
+			return v,e;
+		}
+		if(t == "replace"){
+			v,e = ..frename.rules.applyReplace(rule,name);
+			return v,e;
+		}
+		if(t == "regex_replace"){
+			v,e = ..frename.rules.applyRegexReplace(rule,name);
+			return v,e;
+		}
+		if(t == "case_convert"){
+			v,e = ..frename.rules.applyCaseConvert(rule,name);
+			return v,e;
+		}
+		if(t == "sequence"){
+			v,e = ..frename.rules.applySequence(rule,name);
+			return v,e;
+		}
+		if(t == "date_time"){
+			v,e = ..frename.rules.applyDateTime(rule,name);
+			return v,e;
+		}
+
+		return name;
+	}
+
+	//是否支持按序号格式化（引擎据此决定 {sequence} 的填充方式）
+	supportSequence = function(rule){
+		return (rule.type == "sequence");
+	}
+
+	//是否支持按时间格式化（引擎据此决定 {datetime} 的填充方式）
+	supportDateTime = function(rule){
+		return (rule.type == "date_time");
+	}
+}

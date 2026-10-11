@@ -1,0 +1,405 @@
+// frename 命名规则引擎 —— 对照测试
+//
+// 运行方式：在 aardio IDE 中打开本文件，按 F5（运行）。
+//
+// 期望值的来源：
+// 把旧版 Wails 项目的 backend/pkg/rename 包（engine.go / rule.go / rules/*.go）只读复制到
+// 系统临时目录后，用 go run 实际执行得到的真实输出（旧项目本身未做任何修改）。
+// 下面每个用例的编号与该次执行的 CASE 编号一一对应。
+//
+// 本测试只做名称计算，不读取、创建、修改、移动或删除任何真实文件。
+
+import console;
+import frename;
+
+//true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
+console.open(true);
+
+//旧版 Go 侧使用的固定修改时间：2026-01-02 15:04:05（本地时区）
+var MOD_TS = 1767337445;
+
+//当前时间：用例 F6 / G4 不提供修改时间，旧版会退回 time.Now()
+var NOW = time();
+var TODAY = tostring(NOW,"%Y%m%d");
+var TODAY_DASH = tostring(NOW,"%Y-%m-%d");
+
+var cases = {
+	//================ 一、添加字符 add_text =================
+	{ id="A1"; files={"photo.jpg"};
+		rules={ {type="add_text";enabled=true;params={text="IMG_";addPosition="prefix"}} };
+		expect={"IMG_photo.jpg"}; changed={true} };
+
+	{ id="A2"; files={"photo.jpg"};
+		rules={ {type="add_text";enabled=true;params={text="_2026";addPosition="suffix"}} };
+		expect={"photo_2026.jpg"}; changed={true} };
+
+	{ id="A3"; files={"照片01.png"};
+		rules={ {type="add_text";enabled=true;params={text="-NEW";addPosition="custom";customPosition=2}} };
+		expect={"照片-NEW01.png"}; changed={true} };
+
+	//旧版 ParseAddPosition 把未知位置回退为 prefix，因此"无效的添加位置"错误实际不会触发
+	{ id="A4"; files={"photo.jpg"};
+		rules={ {type="add_text";enabled=true;params={text="X";addPosition="middle"}} };
+		expect={"Xphoto.jpg"}; changed={true} };
+
+	{ id="A5"; files={"photo.jpg"};
+		rules={ {type="add_text";enabled=true;params={text="";addPosition="prefix"}} };
+		expect={"photo.jpg"}; changed={false} };
+
+	{ id="A6"; files={"photo.jpg"};
+		rules={ {type="add_text";enabled=false;params={text="IMG_";addPosition="prefix"}} };
+		expect={"photo.jpg"}; changed={false} };
+
+	{ id="A7"; files={"README"};
+		rules={ {type="add_text";enabled=true;params={text="T_";addPosition="prefix"}} };
+		expect={"T_README"}; changed={true} };
+
+	//多段扩展名：只有最后一段被当作扩展名
+	{ id="A8"; files={"archive.tar.gz"};
+		rules={ {type="add_text";enabled=true;params={text="_bak";addPosition="suffix"}} };
+		expect={"archive.tar_bak.gz"}; changed={true} };
+
+	//点开头的文件：旧版把 ".gitignore" 整体当作扩展名
+	{ id="A9"; files={".gitignore"};
+		rules={ {type="add_text";enabled=true;params={text="x";addPosition="prefix"}} };
+		expect={"x.gitignore"}; changed={true} };
+
+	{ id="A10"; files={"照片.png"};
+		rules={ {type="add_text";enabled=true;params={text="X";addPosition="custom";customPosition=99}} };
+		expect={"照片X.png"}; changed={true} };
+
+	{ id="A11"; files={"照片.png"};
+		rules={ {type="add_text";enabled=true;params={text="X";addPosition="custom";customPosition=-3}} };
+		expect={"X照片.png"}; changed={true} };
+
+	//================ 二、文本替换 replace =================
+	{ id="B1"; files={"hello world.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="world";newText="there";caseSensitive=true;replaceScope="all"}} };
+		expect={"hello there.txt"}; changed={true} };
+
+	{ id="B2"; files={"Hello World.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="world";newText="there";caseSensitive=false;replaceScope="all"}} };
+		expect={"Hello there.txt"}; changed={true} };
+
+	{ id="B3"; files={"abc.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zzz";newText="x";caseSensitive=true;replaceScope="all"}} };
+		expect={"abc.txt"}; changed={false} };
+
+	{ id="B4"; files={"abc.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="";newText="x";caseSensitive=true;replaceScope="all"}} };
+		expect={"abc.txt"}; changed={false} };
+
+	//替换范围覆盖完整文件名，包含扩展名
+	{ id="B5"; files={"data.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="t";newText="X";caseSensitive=true;replaceScope="all"}} };
+		expect={"daXa.XxX"}; changed={true} };
+
+	{ id="B6"; files={"hello.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="AB";caseSensitive=true;replaceScope="first_n";scopeParam1=2}} };
+		expect={"ABllo.txt"}; changed={true} };
+
+	{ id="B7"; files={"hi.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="AB";caseSensitive=true;replaceScope="first_n";scopeParam1=5}} };
+		expect={"AB.txt"}; changed={true} };
+
+	{ id="B8"; files={"hello.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="AB";caseSensitive=true;replaceScope="last_n";scopeParam1=2}} };
+		expect={"helAB.txt"}; changed={true} };
+
+	{ id="B9"; files={"hello.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="AB";caseSensitive=true;replaceScope="after_pos";scopeParam1=2;scopeParam2="1"}} };
+		expect={"hABlo.txt"}; changed={true} };
+
+	{ id="B10"; files={"file-2026.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="X";caseSensitive=true;replaceScope="after_char";scopeParam2="-"}} };
+		expect={"file-X.txt"}; changed={true} };
+
+	{ id="B11"; files={"file-2026.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="X";caseSensitive=true;replaceScope="before_char";scopeParam2="-"}} };
+		expect={"X-2026.txt"}; changed={true} };
+
+	{ id="B12"; files={"file-2026.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="X";caseSensitive=true;replaceScope="after_char_n";scopeParam1=2;scopeParam2="-"}} };
+		expect={"file-X26.txt"}; changed={true} };
+
+	{ id="B13"; files={"file-2026.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="X";caseSensitive=true;replaceScope="before_char_n";scopeParam1=2;scopeParam2="-"}} };
+		expect={"fiX-2026.txt"}; changed={true} };
+
+	//指定字符不存在：原样返回
+	{ id="B14"; files={"file.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="zz";newText="X";caseSensitive=true;replaceScope="after_char";scopeParam2="-"}} };
+		expect={"file.txt"}; changed={false} };
+
+	{ id="B15"; files={"aaa.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="a";newText="b";caseSensitive=false;replaceScope="all"}} };
+		expect={"bbb.txt"}; changed={true} };
+
+	{ id="B16"; files={"中文测试.txt"};
+		rules={ {type="replace";enabled=true;params={oldText="测试";newText="OK";caseSensitive=true;replaceScope="all"}} };
+		expect={"中文OK.txt"}; changed={true} };
+
+	{ id="B17"; files={"photo.jpg"};
+		rules={ {type="replace";enabled=false;params={oldText="photo";newText="pic";caseSensitive=true;replaceScope="all"}} };
+		expect={"photo.jpg"}; changed={false} };
+
+	//================ 三、正则替换 regex_replace =================
+	{ id="C1"; files={"img001.jpg"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="\d+";replacement="999";caseSensitive=true}} };
+		expect={"img999.jpg"}; changed={true} };
+
+	{ id="C2"; files={"2026-01-02 photo.jpg"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="(\d{4})-(\d{2})-(\d{2})";replacement="$2$3$1";caseSensitive=true}} };
+		expect={"01022026 photo.jpg"}; changed={true} };
+
+	{ id="C3"; files={"Photo.JPG"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="photo";replacement="pic";caseSensitive=false}} };
+		expect={"pic.JPG"}; changed={true} };
+
+	//正则非法：旧版返回错误并保留原名；错误文本的后半段由底层正则引擎给出，这里只比对前缀
+	{ id="C4"; files={"Photo.JPG"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="(";replacement="x";caseSensitive=true}} };
+		expect={"Photo.JPG"}; changed={false};
+		errPrefix="规则 正则替换: ( → x 应用失败: 无效的正则表达式" };
+
+	{ id="C5"; files={"Photo.JPG"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="";replacement="x";caseSensitive=true}} };
+		expect={"Photo.JPG"}; changed={false} };
+
+	{ id="C6"; files={"photo.jpg"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="zzz";replacement="x";caseSensitive=true}} };
+		expect={"photo.jpg"}; changed={false} };
+
+	{ id="C7"; files={"第一章.txt"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="第(.)章";replacement="Ch$1";caseSensitive=true}} };
+		expect={"Ch一.txt"}; changed={true} };
+
+	{ id="C8"; files={"file(1).txt"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="\(";replacement="_";caseSensitive=true}} };
+		expect={"file_1).txt"}; changed={true} };
+
+	//================ 四、大小写转换 case_convert =================
+	//upper / lower 连同扩展名一起转换
+	{ id="D1"; files={"My Photo.JPG"};
+		rules={ {type="case_convert";enabled=true;params={caseType="upper"}} };
+		expect={"MY PHOTO.JPG"}; changed={true} };
+
+	{ id="D2"; files={"My Photo.JPG"};
+		rules={ {type="case_convert";enabled=true;params={caseType="lower"}} };
+		expect={"my photo.jpg"}; changed={true} };
+
+	{ id="D3"; files={"my photo.JPG"};
+		rules={ {type="case_convert";enabled=true;params={caseType="first"}} };
+		expect={"My photo.JPG"}; changed={true} };
+
+	//首字符是汉字：旧版不做转换
+	{ id="D4"; files={"中文abc.txt"};
+		rules={ {type="case_convert";enabled=true;params={caseType="first"}} };
+		expect={"中文abc.txt"}; changed={false} };
+
+	//title 会把连续空白折叠为单个空格
+	{ id="D5"; files={"hello  world.txt"};
+		rules={ {type="case_convert";enabled=true;params={caseType="title"}} };
+		expect={"Hello World.txt"}; changed={true} };
+
+	{ id="D6"; files={"中文 abc.txt"};
+		rules={ {type="case_convert";enabled=true;params={caseType="title"}} };
+		expect={"中文 Abc.txt"}; changed={true} };
+
+	//未知 caseType：旧版 switch 的 default 分支，等同不改写
+	{ id="D7"; files={"My Photo.JPG"};
+		rules={ {type="case_convert";enabled=true;params={caseType="unknown"}} };
+		expect={"My Photo.JPG"}; changed={false} };
+
+	{ id="D8"; files={"README"};
+		rules={ {type="case_convert";enabled=true;params={caseType="upper"}} };
+		expect={"README"}; changed={false} };
+
+	{ id="D9"; files={"中文文件.TXT"};
+		rules={ {type="case_convert";enabled=true;params={caseType="lower"}} };
+		expect={"中文文件.txt"}; changed={true} };
+
+	//================ 五、数字序列 sequence =================
+	{ id="E1"; files={"a.txt";"b.txt";"c.txt"};
+		rules={ {type="sequence";enabled=true;params={start=1;step=1;digits=3;position="end"}} };
+		expect={"a_001.txt";"b_002.txt";"c_003.txt"}; changed={true;true;true} };
+
+	{ id="E2"; files={"a.txt";"b.txt";"c.txt"};
+		rules={ {type="sequence";enabled=true;params={start=1;step=1;digits=3;position="start"}} };
+		expect={"001_a.txt";"002_b.txt";"003_c.txt"}; changed={true;true;true} };
+
+	{ id="E3"; files={"a.txt";"b.txt";"c.txt"};
+		rules={ {type="sequence";enabled=true;params={start=10;step=5;digits=2;position="end"}} };
+		expect={"a_10.txt";"b_15.txt";"c_20.txt"}; changed={true;true;true} };
+
+	//参数全部缺失：start=0 step=0 digits=0，旧版三个文件都会得到 0
+	{ id="E4"; files={"a.txt";"b.txt";"c.txt"};
+		rules={ {type="sequence";enabled=true;params={}} };
+		expect={"a_0.txt";"b_0.txt";"c_0.txt"}; changed={true;true;true} };
+
+	{ id="E5"; files={"照片.png";"文件.png"};
+		rules={ {type="sequence";enabled=true;params={start=1;step=1;digits=3;position="end"}} };
+		expect={"照片_001.png";"文件_002.png"}; changed={true;true} };
+
+	{ id="E6"; files={"a.txt";"b.txt";"c.txt"};
+		rules={ {type="sequence";enabled=false;params={start=1;step=1;digits=3;position="end"}} };
+		expect={"a.txt";"b.txt";"c.txt"}; changed={false;false;false} };
+
+	//================ 六、日期时间 date_time =================
+	{ id="F1"; files={ {name="photo.jpg";modTime=MOD_TS} };
+		rules={ {type="date_time";enabled=true;params={format="20060102";position="end";useFileTime=true}} };
+		expect={"photo_20260102.jpg"}; changed={true} };
+
+	{ id="F2"; files={ {name="photo.jpg";modTime=MOD_TS} };
+		rules={ {type="date_time";enabled=true;params={format="2006-01-02";position="end";useFileTime=true}} };
+		expect={"photo_2026-01-02.jpg"}; changed={true} };
+
+	{ id="F3"; files={ {name="photo.jpg";modTime=MOD_TS} };
+		rules={ {type="date_time";enabled=true;params={format="200601021504";position="end";useFileTime=true}} };
+		expect={"photo_202601021504.jpg"}; changed={true} };
+
+	{ id="F4"; files={ {name="photo.jpg";modTime=MOD_TS} };
+		rules={ {type="date_time";enabled=true;params={format="20060102";position="start";useFileTime=true}} };
+		expect={"20260102_photo.jpg"}; changed={true} };
+
+	//关键点：useFileTime=false 时，旧版仍然使用文件修改时间（该参数在预览阶段未被真正使用）
+	{ id="F5"; files={ {name="photo.jpg";modTime=MOD_TS} };
+		rules={ {type="date_time";enabled=true;params={format="20060102";position="end";useFileTime=false}} };
+		expect={"photo_20260102.jpg"}; changed={true} };
+
+	//无修改时间：退回当前时间
+	{ id="F6"; files={ {name="photo.jpg";modTime=0} };
+		rules={ {type="date_time";enabled=true;params={format="20060102";position="end";useFileTime=false}} };
+		expect={"photo_" ++ TODAY ++ ".jpg"}; changed={true} };
+
+	{ id="F7"; files={ {name="a.jpg";modTime=MOD_TS}; {name="b.jpg";modTime=MOD_TS} };
+		rules={ {type="date_time";enabled=true;params={format="2006-01-02";position="end";useFileTime=true}} };
+		expect={"a_2026-01-02.jpg";"b_2026-01-02.jpg"}; changed={true;true} };
+
+	//================ 七、串行执行 / 禁用 / 组合 =================
+	{ id="G1"; files={"hello world.txt"};
+		rules={
+			{type="replace";enabled=true;params={oldText="world";newText="there";caseSensitive=true;replaceScope="all"}};
+			{type="add_text";enabled=true;params={text="IMG_";addPosition="prefix"}};
+			{type="case_convert";enabled=true;params={caseType="upper"}}
+		};
+		expect={"IMG_HELLO THERE.TXT"}; changed={true} };
+
+	{ id="G2"; files={"a.txt";"b.txt"};
+		rules={
+			{type="sequence";enabled=true;params={start=1;step=1;digits=3;position="end"}};
+			{type="replace";enabled=true;params={oldText="0";newText="9";caseSensitive=true;replaceScope="all"}}
+		};
+		expect={"a_991.txt";"b_992.txt"}; changed={true;true} };
+
+	{ id="G3"; files={"a.txt"};
+		rules={
+			{type="add_text";enabled=true;params={text="X_";addPosition="prefix"}};
+			{type="add_text";enabled=false;params={text="Y_";addPosition="prefix"}}
+		};
+		expect={"X_a.txt"}; changed={true} };
+
+	{ id="G4"; files={"a.txt";"b.txt"};
+		rules={
+			{type="sequence";enabled=true;params={start=1;step=1;digits=3;position="start"}};
+			{type="date_time";enabled=true;params={format="2006-01-02";position="end";useFileTime=true}}
+		};
+		expect={"001_a_" ++ TODAY_DASH ++ ".txt";"002_b_" ++ TODAY_DASH ++ ".txt"}; changed={true;true} };
+
+	//================ 八、中文 / 空串 / 特殊字符 =================
+	{ id="H1"; files={"中文 文件.txt"};
+		rules={ {type="add_text";enabled=true;params={text="【备份】";addPosition="prefix"}} };
+		expect={"【备份】中文 文件.txt"}; changed={true} };
+
+	{ id="H2"; files={""};
+		rules={ {type="add_text";enabled=true;params={text="X";addPosition="prefix"}} };
+		expect={"X"}; changed={true} };
+
+	{ id="H3"; files={""};
+		rules={ {type="case_convert";enabled=true;params={caseType="upper"}} };
+		expect={""}; changed={false} };
+
+	//文件名里含路径分隔符：旧版照常按字符串处理，不做路径校验
+	{ id="H4"; files={"a/b.txt"};
+		rules={ {type="add_text";enabled=true;params={text="X";addPosition="prefix"}} };
+		expect={"Xa/b.txt"}; changed={true} };
+
+	{ id="H5"; files={"photo.JPG"};
+		rules={ {type="regex_replace";enabled=true;params={pattern="\.(jpg|png)$";replacement=".webp";caseSensitive=false}} };
+		expect={"photo.webp"}; changed={true} };
+
+	{ id="H6"; files={"no-ext"};
+		rules={ {type="add_text";enabled=true;params={text="_x";addPosition="suffix"}} };
+		expect={"no-ext_x"}; changed={true} };
+
+	//================ 九、自定义目标（优先级高于规则） =================
+	{ id="I1"; files={ {name="old.txt";path="old.txt";customTarget="D:\dir\newName.txt"} };
+		rules={ {type="add_text";enabled=true;params={text="ZZZ_";addPosition="prefix"}} };
+		expect={"newName.txt"}; changed={true} };
+
+	//旧版用 "自定义目标完整路径 != 文件名" 判定变化，因此路径不同但文件名相同时仍标记为已变化
+	{ id="I2"; files={ {name="old.txt";path="old.txt";customTarget="D:\dir\old.txt"} };
+		rules={ {type="add_text";enabled=true;params={text="ZZZ_";addPosition="prefix"}} };
+		expect={"old.txt"}; changed={true} };
+};
+
+var passed = 0;
+var failed = 0;
+
+console.log("=========================================================");
+console.log("frename 命名规则引擎 —— 对照测试");
+console.log("期望值来源：旧版 Go 规则包实际运行输出（只读复制，未改动旧项目）");
+console.log("=========================================================");
+
+for(i=1;#cases;1){
+	var c = cases[i];
+	var res = frename.preview(c.files,c.rules,NOW);
+
+	var expectNames = c.expect;
+	var expectChanged = c.changed;
+
+	var countOk = (#res == #expectNames);
+	if(!countOk){
+		failed = failed + 1;
+		console.log("✗ " ++ c.id ++ " 结果数量不符：期望 " ++ #expectNames ++ " 实际 " ++ #res);
+	}
+
+	var n = countOk ? #res : math.min(#res,#expectNames);
+
+	for(j=1;n;1){
+		var r = res[j];
+
+		var okName = (r.newName == expectNames[j]);
+		var okChanged = (r.changed == expectChanged[j]);
+
+		var okError;
+		if(type(c.errPrefix) == "string"){
+			//本文件运行在全局命名空间，直接用 string 即可（不需要 .. 前缀）
+			if(r.error) okError = string.startsWith(r.error,c.errPrefix);
+			else okError = false;
+		}
+		else {
+			okError = !r.error;
+		}
+
+		if(okName && okChanged && okError){
+			passed = passed + 1;
+		}
+		else {
+			failed = failed + 1;
+			console.log("✗ " ++ c.id ++ " #" ++ j
+				++ " 输入=" ++ r.originalName
+				++ " 期望=" ++ expectNames[j]
+				++ " (changed=" ++ tostring(expectChanged[j]) ++ ")"
+				++ " 实际=" ++ r.newName
+				++ " (changed=" ++ tostring(r.changed) ++ ")"
+				++ " 错误=" ++ tostring(r.error));
+		}
+	}
+}
+
+console.log("---------------------------------------------------------");
+console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
+console.log("---------------------------------------------------------");
+
+console.pause();

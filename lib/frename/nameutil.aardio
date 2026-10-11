@@ -1,0 +1,185 @@
+// frename.nameutil —— 文件名与字符级工具
+//
+// 职责：只做纯字符串计算。
+// 本文件不读取、创建、修改、移动或删除任何真实文件，也不接触界面。
+//
+// 行为依据（旧版 Wails/Go 项目，只读参考）：
+//   - 扩展名拆分：backend/pkg/rename/rules/*.go 中反复出现的
+//         ext := filepath.Ext(filename)
+//         nameWithoutExt := filename[:len(filename)-len(ext)]
+//     即 Go 标准库 path/filepath.Ext 的规则。
+
+namespace frename.nameutil{
+
+	//拆分文件名与扩展名，返回两个值：主干,扩展名
+	//规则：自字符串末尾向前逐字节扫描；遇到路径分隔符立即停止并返回空扩展名；
+	//遇到第一个点号，则该点号及其后的全部内容即为扩展名。
+	//例：
+	//  "photo.jpg"      -> "photo", ".jpg"
+	//  "archive.tar.gz" -> "archive.tar", ".gz"
+	//  ".gitignore"     -> "", ".gitignore"
+	//  "README"         -> "README", ""
+	//  "dir.a/b"        -> "dir.a/b", ""
+	splitExt = function(name){
+		if(type(name) != "string") return "","";
+
+		var i = #name;
+		while(i > 0){
+			var c = ..string.slice(name,i,i);
+			if(c == ".") return ..string.left(name,i-1), ..string.right(name,-i);
+			if(c == '\\' || c == "/") break;
+			i--;
+		}
+
+		return name,"";
+	}
+
+	//取路径的最后一段，等价于 Go 的 filepath.Base（按 Windows 分隔符处理）
+	//"D:\dir\newName.txt" -> "newName.txt"
+	baseNameOf = function(p){
+		if(type(p) != "string") return "";
+
+		var i = #p;
+		while(i > 0){
+			var c = ..string.slice(p,i,i);
+			if(c == '\\' || c == "/") return ..string.right(p,-(i+1));
+			i--;
+		}
+
+		return p;
+	}
+
+	//统计字符数（UTF-8 字符计数，一个汉字计 1）
+	//string.len 在遇到非法 UTF-8 编码时返回 null，这里统一折算为 0，
+	//由调用方退化为"不做按字符的改写"。
+	charCount = function(s){
+		if(type(s) != "string" || !#s) return 0;
+		var n = ..string.len(s);
+		if(n === null) return 0;
+		return n;
+	}
+
+	//截取第 a 个字符（0 开始）到第 b 个字符（不含）之间的内容
+	//参数越界会自动收敛到安全范围，越界返回空字符串
+	midChars = function(s,a,b){
+		var cnt = ..frename.nameutil.charCount(s);
+		if(!cnt) return "";
+		if(a < 0) a = 0;
+		if(b > cnt) b = cnt;
+		if(b <= a) return "";
+		return ..string.slice(s,a+1,b,true);
+	}
+
+	//截取自第 a 个字符（0 开始）到末尾的内容
+	tailChars = function(s,a){
+		var cnt = ..frename.nameutil.charCount(s);
+		if(!cnt) return "";
+		if(a < 0) a = 0;
+		if(a >= cnt) return "";
+		return ..string.right(s,-(a+1),true);
+	}
+
+	//查找子串首次出现的位置，返回字符索引（0 开始），未找到返回 -1
+	//先用字节级 string.indexOf 定位，再把前缀字节数换算成字符数
+	charIndexOf = function(s,sub){
+		if(type(s) != "string" || type(sub) != "string") return -1;
+		if(!#s || !#sub) return -1;
+
+		var p = ..string.indexOf(s,sub);
+		if(!p) return -1;
+
+		var n = ..string.len( ..string.left(s,p-1) );
+		if(n === null) return -1;
+		return n;
+	}
+
+	//判断单个字节是否为 ASCII 空白字符
+	//逐字节比较是安全的：UTF-8 多字节字符的每个字节都 >= 0x80，不可能等于 ASCII 空白
+	isSpaceByte = function(c){
+		if(c == " ") return true;
+		if(c == '\t') return true;
+		if(c == '\r') return true;
+		if(c == '\n') return true;
+		if(c == '\v') return true;
+		if(c == '\f') return true;
+		return false;
+	}
+
+	//按空白切分为单词数组，连续空白视为一个分隔符，忽略首尾空白
+	//对应旧版 Go 的 strings.Fields（区别见报告：仅识别 ASCII 空白）
+	splitWords = function(s){
+		var words = {};
+		if(type(s) != "string" || !#s) return words;
+
+		var cur = "";
+		for(i=1;#s;1){
+			var c = ..string.slice(s,i,i);
+			if(..frename.nameutil.isSpaceByte(c)){
+				if(#cur){
+					..table.push(words,cur);
+					cur = "";
+				}
+			}
+			else {
+				cur = cur ++ c;
+			}
+		}
+
+		if(#cur) ..table.push(words,cur);
+		return words;
+	}
+
+	//首字母大写：仅当首字符是 ASCII 小写字母时才转换
+	//对应旧版 Go 的 CaseConvertRule.toFirstUpper：
+	//  if firstRune <= 127 && unicode.IsLetter(firstRune) { ToUpper } else { 原样返回 }
+	firstUpper = function(s){
+		if(type(s) != "string" || !#s) return s;
+
+		var first = ..string.slice(s,1,1,true);
+		if(!#first) return s;
+
+		//多字节字符（例如汉字）的字节都 >= 0x80，不可能命中 [a-z]
+		//注意 string.match 会返回多个值，这里只取第一个（匹配到的内容）
+		var matched = ..string.match(first,"[a-z]");
+		if(!matched) return s;
+
+		return ..string.upper(first) ++ ..string.right(s,-2,true);
+	}
+
+	//标题格式：每个单词首字母大写，单词之间用单个空格连接
+	//对应旧版 Go 的 toTitleCase：strings.Fields -> 逐个 toFirstUpper -> Join(" ")
+	//注意：会把连续空白折叠为单个空格，与旧版行为一致
+	titleCase = function(s){
+		if(type(s) != "string" || !#s) return s;
+
+		var words = ..frename.nameutil.splitWords(s);
+		if(!#words) return "";
+
+		for(i=1;#words;1){
+			words[i] = ..frename.nameutil.firstUpper(words[i]);
+		}
+
+		return ..string.join(words," ");
+	}
+
+	//数字按指定位数补零，负数时负号占位后补零
+	//对应旧版 Go 的 fmt.Sprintf("%0*d", digits, num)
+	//digits 小于 1 时不补零（旧版 digits 缺省为 0 时同样不补零）
+	padNumber = function(num,digits){
+		var neg = false;
+		if(num < 0){
+			neg = true;
+			num = -num;
+		}
+
+		var s = tostring(..math.floor(num));
+		if(digits > 0){
+			while(#s < digits){
+				s = "0" ++ s;
+			}
+		}
+
+		if(neg) s = "-" ++ s;
+		return s;
+	}
+}

@@ -1,0 +1,137 @@
+旧版 Go 规则引擎的真实输出基线
+================================
+
+用途
+----
+本文件是 tests/ruleEngineTest.aardio 中全部期望值的来源，用于避免"凭空编造与旧版一致的结果"。
+
+来源说明
+--------
+旧版 Wails 项目（C:\projects\GoProjects\FileRenameManager-Wails）未被修改、移动或删除任何文件。
+生成方式是把旧版的 rename 包**只读复制**到系统临时目录后，用 go run 实际执行：
+
+  1. 复制（只读，源文件保持不变）
+     C:\projects\GoProjects\FileRenameManager-Wails\backend\pkg\rename\engine.go
+     C:\projects\GoProjects\FileRenameManager-Wails\backend\pkg\rename\rule.go
+     C:\projects\GoProjects\FileRenameManager-Wails\backend\pkg\rename\rules\*.go
+     ->  %TEMP%\rename-verify\pkg\rename\ 与 %TEMP%\rename-verify\pkg\rename\rules\
+
+  2. 在 %TEMP%\rename-verify 下新建 go.mod（module renameverify / go 1.20）
+     并新建 main.go：按与 backend/app.go App.AddRule 完全一致的方式构造规则，
+     再调用 rename.Engine.Preview(filenames, modTimes) 打印结果。
+     （app.go 层的自定义目标分支按 App.PreviewRename 的逻辑单独模拟）
+
+  3. 执行
+     cd %TEMP%\rename-verify
+     go run .
+
+  4. 输出格式
+     CASE|用例编号|文件序号|原文件名|新文件名|changed|错误信息|[CUSTOM]
+     其中 CUSTOM 标记该行走的是自定义目标分支。
+
+执行环境
+--------
+go1.23.4 windows/amd64
+TS=<下面首行的数值>，即用例使用的固定修改时间（2026-01-02 15:04:05，本地时区）
+F6 / G4 两个用例不提供修改时间，旧版会退回 time.Now()，因此这两条结果随运行日期变化。
+
+原始输出
+--------
+TS=1767337445
+CASE|A1|1|photo.jpg|IMG_photo.jpg|true||
+CASE|A2|1|photo.jpg|photo_2026.jpg|true||
+CASE|A3|1|照片01.png|照片-NEW01.png|true||
+CASE|A4|1|photo.jpg|Xphoto.jpg|true||
+CASE|A5|1|photo.jpg|photo.jpg|false||
+CASE|A6|1|photo.jpg|photo.jpg|false||
+CASE|A7|1|README|T_README|true||
+CASE|A8|1|archive.tar.gz|archive.tar_bak.gz|true||
+CASE|A9|1|.gitignore|x.gitignore|true||
+CASE|A10|1|照片.png|照片X.png|true||
+CASE|A11|1|照片.png|X照片.png|true||
+CASE|B1|1|hello world.txt|hello there.txt|true||
+CASE|B2|1|Hello World.txt|Hello there.txt|true||
+CASE|B3|1|abc.txt|abc.txt|false||
+CASE|B4|1|abc.txt|abc.txt|false||
+CASE|B5|1|data.txt|daXa.XxX|true||
+CASE|B6|1|hello.txt|ABllo.txt|true||
+CASE|B7|1|hi.txt|AB.txt|true||
+CASE|B8|1|hello.txt|helAB.txt|true||
+CASE|B9|1|hello.txt|hABlo.txt|true||
+CASE|B10|1|file-2026.txt|file-X.txt|true||
+CASE|B11|1|file-2026.txt|X-2026.txt|true||
+CASE|B12|1|file-2026.txt|file-X26.txt|true||
+CASE|B13|1|file-2026.txt|fiX-2026.txt|true||
+CASE|B14|1|file.txt|file.txt|false||
+CASE|B15|1|aaa.txt|bbb.txt|true||
+CASE|B16|1|中文测试.txt|中文OK.txt|true||
+CASE|B17|1|photo.jpg|photo.jpg|false||
+CASE|C1|1|img001.jpg|img999.jpg|true||
+CASE|C2|1|2026-01-02 photo.jpg|01022026 photo.jpg|true||
+CASE|C3|1|Photo.JPG|pic.JPG|true||
+CASE|C4|1|Photo.JPG|Photo.JPG|false|规则 正则替换: ( → x 应用失败: 无效的正则表达式: error parsing regexp: missing closing ): `(`|
+CASE|C5|1|Photo.JPG|Photo.JPG|false||
+CASE|C6|1|photo.jpg|photo.jpg|false||
+CASE|C7|1|第一章.txt|Ch一.txt|true||
+CASE|C8|1|file(1).txt|file_1).txt|true||
+CASE|D1|1|My Photo.JPG|MY PHOTO.JPG|true||
+CASE|D2|1|My Photo.JPG|my photo.jpg|true||
+CASE|D3|1|my photo.JPG|My photo.JPG|true||
+CASE|D4|1|中文abc.txt|中文abc.txt|false||
+CASE|D5|1|hello  world.txt|Hello World.txt|true||
+CASE|D6|1|中文 abc.txt|中文 Abc.txt|true||
+CASE|D7|1|My Photo.JPG|My Photo.JPG|false||
+CASE|D8|1|README|README|false||
+CASE|D9|1|中文文件.TXT|中文文件.txt|true||
+CASE|E1|1|a.txt|a_001.txt|true||
+CASE|E1|2|b.txt|b_002.txt|true||
+CASE|E1|3|c.txt|c_003.txt|true||
+CASE|E2|1|a.txt|001_a.txt|true||
+CASE|E2|2|b.txt|002_b.txt|true||
+CASE|E2|3|c.txt|003_c.txt|true||
+CASE|E3|1|a.txt|a_10.txt|true||
+CASE|E3|2|b.txt|b_15.txt|true||
+CASE|E3|3|c.txt|c_20.txt|true||
+CASE|E4|1|a.txt|a_0.txt|true||
+CASE|E4|2|b.txt|b_0.txt|true||
+CASE|E4|3|c.txt|c_0.txt|true||
+CASE|E5|1|照片.png|照片_001.png|true||
+CASE|E5|2|文件.png|文件_002.png|true||
+CASE|E6|1|a.txt|a.txt|false||
+CASE|E6|2|b.txt|b.txt|false||
+CASE|E6|3|c.txt|c.txt|false||
+CASE|F1|1|photo.jpg|photo_20260102.jpg|true||
+CASE|F2|1|photo.jpg|photo_2026-01-02.jpg|true||
+CASE|F3|1|photo.jpg|photo_202601021504.jpg|true||
+CASE|F4|1|photo.jpg|20260102_photo.jpg|true||
+CASE|F5|1|photo.jpg|photo_20260102.jpg|true||
+CASE|F6|1|photo.jpg|photo_20261011.jpg|true||
+CASE|F7|1|a.jpg|a_2026-01-02.jpg|true||
+CASE|F7|2|b.jpg|b_2026-01-02.jpg|true||
+CASE|G1|1|hello world.txt|IMG_HELLO THERE.TXT|true||
+CASE|G2|1|a.txt|a_991.txt|true||
+CASE|G2|2|b.txt|b_992.txt|true||
+CASE|G3|1|a.txt|X_a.txt|true||
+CASE|G4|1|a.txt|001_a_2026-10-11.txt|true||
+CASE|G4|2|b.txt|002_b_2026-10-11.txt|true||
+CASE|H1|1|中文 文件.txt|【备份】中文 文件.txt|true||
+CASE|H2|1||X|true||
+CASE|H3|1|||false||
+CASE|H4|1|a/b.txt|Xa/b.txt|true||
+CASE|H5|1|photo.JPG|photo.webp|true||
+CASE|H6|1|no-ext|no-ext_x|true||
+CASE|I1|1|old.txt|newName.txt|true||CUSTOM
+CASE|I2|1|old.txt|old.txt|true||CUSTOM
+
+由基线可以直接读出的旧版行为要点
+--------------------------------
+1. A4：addPosition 传非法值 "middle" 时不报错，而是被 ParseAddPosition 回退成 prefix，
+   得到 Xphoto.jpg。因此 add_text.go 里 "无效的添加位置" 这个错误分支经 app.go 永远不可达。
+2. E4：start / step / digits 全部缺失时，三个文件都得到 "0"（start=0, step=0 -> 恒为 0）。
+3. F5 vs F1：useFileTime=false 时结果仍是文件修改时间，说明该参数在预览阶段没有被真正使用。
+4. D1 / D2 / D9：upper、lower 会连同扩展名一起转换；first、title 不动扩展名。
+5. D5：title 会把连续空白折叠成单个空格。
+6. B5：replace 的 all 范围替换覆盖完整文件名，包含扩展名。
+7. A9：".gitignore" 被整体当作扩展名，主干为空。
+8. I2：自定义目标与文件名相同（但路径不同）时，changed 仍为 true，
+   因为旧版比较的是 CustomTarget 完整路径与 file.Path。
