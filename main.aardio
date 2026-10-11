@@ -1,0 +1,16 @@
+//FileRenameManager 程序入口
+//
+//职责：加载主窗口、显示主窗口、启动消息循环。
+//所有界面与交互逻辑都在 /dlg/mainForm.aardio 中。
+
+import win.ui;
+
+//加载主窗口：dlg/mainForm.aardio 创建并返回窗体对象
+mainForm = win.loadForm("\dlg\mainForm.aardio");
+
+//显示主窗口
+mainForm.show();
+
+//启动界面线程消息循环
+//关闭主窗口后此函数返回，进程随之退出
+return win.loopMessage();

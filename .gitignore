@@ -1,0 +1,6 @@
+# aardio IDE 生成的发布触发器
+.build/
+
+# 发布输出目录
+dist/
+*.exe

@@ -1,0 +1,94 @@
+//FileRenameManager 主窗口（最小原型）
+//
+//本轮目标：只搭出 Windows 原生控件界面并打通交互。
+//  1. 选择文件 / 选择文件夹：只打开系统对话框并显示用户选择的路径，不读写文件。
+//  2. 文件名前缀输入框：只接收用户输入。
+//  3. 文件列表：只显示已选路径。
+//  4. 状态文本：显示操作反馈。
+//本文件不执行任何真实的文件重命名、移动、删除操作。
+
+import win.ui;
+import fsys.dlg;      //提供 fsys.dlg.openMulti（选择文件对话框）
+import fsys.dlg.dir;  //提供 fsys.dlg.dir（选择文件夹对话框）
+
+/*DSG{{*/
+var winform = win.form(text="FileRenameManager";right=759;bottom=469)
+winform.add(
+lblPrefix={cls="static";text="文件名前缀：";left=16;top=16;right=96;bottom=38;z=1};
+txtPrefix={cls="edit";left=104;top=12;right=380;bottom=40;edge=1;anchors={left=1;top=1;right=1};z=2};
+btnPickFiles={cls="button";text="选择文件";left=396;top=10;right=506;bottom=42;anchors={top=1;right=1};z=3};
+btnPickDir={cls="button";text="选择文件夹";left=516;top=10;right=626;bottom=42;anchors={top=1;right=1};z=4};
+btnTest={cls="button";text="测试交互";left=636;top=10;right=736;bottom=42;anchors={top=1;right=1};z=5};
+lvFiles={cls="listview";left=16;top=52;right=736;bottom=386;anchors={left=1;top=1;right=1;bottom=1};edge=1;fullRow=1;gridLines=1;z=6};
+lblStatus={cls="static";text="就绪";left=16;top=396;right=736;bottom=424;anchors={left=1;right=1;bottom=1};edge=1;z=7}
+)
+/*}}*/
+
+//列表列：序号 / 名称 / 所在目录
+winform.lvFiles.columns = {
+	{"序号",70,2/*_LVCFMT_CENTER*/};
+	{"名称",240,0/*_LVCFMT_LEFT*/};
+	{"所在目录",-1,0/*_LVCFMT_LEFT*/}
+};
+
+//输入框为空时显示的浅色提示文本
+winform.txtPrefix.setCueBannerText("例如：vacation_2026_");
+
+//状态文本：统一的操作反馈出口
+var setStatus = function(text){
+	winform.lblStatus.text = text;
+}
+
+//把路径数组显示到列表中（只显示，不读写文件）
+var showPaths = function(paths){
+	winform.lvFiles.clear();
+
+	for(i=1;#paths;1){
+		var tPath = io.splitpath(paths[i]);
+		winform.lvFiles.addItem({
+			text = { tostring(i); tPath.file; tPath.dir };
+		});
+	}
+
+	setStatus("列表已更新，共 " ++ #paths ++ " 项（仅显示路径，未对文件做任何操作）");
+}
+
+//【选择文件】只打开系统文件对话框并显示所选路径
+winform.btnPickFiles.oncommand = function(id,event){
+	var paths = fsys.dlg.openMulti("所有文件|*.*|","请选择文件",,winform.hwnd);
+
+	if(!paths){
+		setStatus("已取消：没有选择任何文件");
+		return;
+	}
+
+	showPaths(paths);
+}
+
+//【选择文件夹】只打开系统文件夹对话框并显示所选路径
+winform.btnPickDir.oncommand = function(id,event){
+	var dir = fsys.dlg.dir(,winform.hwnd,"请选择文件夹");
+
+	if(!dir){
+		setStatus("已取消：没有选择任何文件夹");
+		return;
+	}
+
+	showPaths({ dir });
+	setStatus("已选择文件夹：" ++ dir ++ "（仅显示路径，未对文件做任何操作）");
+}
+
+//【测试交互】只更新状态文本，用于确认事件链路可用
+winform.btnTest.oncommand = function(id,event){
+	var prefix = winform.txtPrefix.text;
+	if(!#prefix) prefix = "(未填写)";
+
+	setStatus("测试交互成功：文件名前缀 = " ++ prefix
+		++ "，列表 " ++ winform.lvFiles.count ++ " 项"
+		++ "，时间 " ++ tostring(time.now(),"%H:%M:%S"));
+}
+
+setStatus("就绪：请选择文件或文件夹，并填写文件名前缀");
+
+//返回窗体对象，main.aardio 中的 win.loadForm 会接收此返回值
+return winform;
