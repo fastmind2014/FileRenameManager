@@ -1,94 +1,947 @@
-//FileRenameManager 主窗口（最小原型）
+//FileRenameManager 主窗口 —— 规则编辑 + 模拟文件名预览
 //
-//本轮目标：只搭出 Windows 原生控件界面并打通交互。
-//  1. 选择文件 / 选择文件夹：只打开系统对话框并显示用户选择的路径，不读写文件。
-//  2. 文件名前缀输入框：只接收用户输入。
-//  3. 文件列表：只显示已选路径。
-//  4. 状态文本：显示操作反馈。
-//本文件不执行任何真实的文件重命名、移动、删除操作。
+//本轮目标：
+//  1. 左侧：规则列表，支持添加（六类）/ 删除 / 上移 / 下移 / 启用禁用，
+//     并按当前选中规则的类型显示对应的参数输入控件。
+//  2. 右侧：用内存中的模拟文件名调用 frename.preview() 得到预览结果。
+//  3. 底部状态栏：规则数量 + 预览统计 + 时间来源。
+//
+//本文件不执行任何真实的文件重命名、移动、删除操作，也不读取磁盘上的真实文件。
+//预览用的文件名全部来自内存中的模拟数据 MOCK_FILES。
+//
+//命名行为完全由 lib/frename/ 决定，本文件只负责收集参数并展示结果，
+//不为界面方便改动 frename.preview() 的已有语义。
+//
+//
+//【aardio 语法坑，本文件严格遵守】
+//
+//1. 双引号是「原样字符串」，反斜杠不做转义。所以 "\r\n" 是 4 个字面字符，
+//   要得到真正的回车换行必须用单引号（编译时转义字符串）：'\r\n'。
+//
+//2. try catch 块是立即执行的匿名函数体，里面的 return 只跳出 try catch 自身，
+//   不会退出外层函数。所以错误处理只在 catch 里记录，判断放到 try catch 之后。
+//
+//3. listview 的 selIndex 属性内部是 setItemState(行,3,3)，只设置目标行、
+//   不会清除其他行的选中状态。想切换选中行必须先清空（见 clearSelection）。
+//
+//4. listview 的 onSelChanged 触发条件是 !!selected != !!(uOldState & 3)，
+//   某些状态迁移（例如「仅获得焦点」到「焦点+选中」）不会触发。
+//   所以选中同步统一走 onItemChanged → syncSelectionFromList，
+//   并从控件实时读取当前行，做成幂等操作。
 
 import win.ui;
-import fsys.dlg;      //提供 fsys.dlg.openMulti（选择文件对话框）
-import fsys.dlg.dir;  //提供 fsys.dlg.dir（选择文件夹对话框）
+import win.ui.minmax;
+import frename;
 
 /*DSG{{*/
-var winform = win.form(text="FileRenameManager";right=759;bottom=469)
+var winform = win.form(text="FileRenameManager - 规则编辑与预览";right=960;bottom=644)
 winform.add(
-lblPrefix={cls="static";text="文件名前缀：";left=16;top=16;right=96;bottom=38;z=1};
-txtPrefix={cls="edit";left=104;top=12;right=380;bottom=40;edge=1;anchors={left=1;top=1;right=1};z=2};
-btnPickFiles={cls="button";text="选择文件";left=396;top=10;right=506;bottom=42;anchors={top=1;right=1};z=3};
-btnPickDir={cls="button";text="选择文件夹";left=516;top=10;right=626;bottom=42;anchors={top=1;right=1};z=4};
-btnTest={cls="button";text="测试交互";left=636;top=10;right=736;bottom=42;anchors={top=1;right=1};z=5};
-lvFiles={cls="listview";left=16;top=52;right=736;bottom=386;anchors={left=1;top=1;right=1;bottom=1};edge=1;fullRow=1;gridLines=1;z=6};
-lblStatus={cls="static";text="就绪";left=16;top=396;right=736;bottom=424;anchors={left=1;right=1;bottom=1};edge=1;z=7}
+lblRules={cls="static";text="规则列表（自上而下依次应用）";left=12;top=12;right=452;bottom=32;z=1};
+cmbRuleType={cls="combobox";left=12;top=36;right=296;bottom=60;edge=1;items={};mode="dropdownlist";z=2};
+btnAdd={cls="button";text="添加规则";left=304;top=34;right=452;bottom=62;z=3};
+lvRules={cls="listview";left=12;top=68;right=452;bottom=286;edge=1;fullRow=1;gridLines=1;z=4};
+btnUp={cls="button";text="上移";left=12;top=294;right=100;bottom=324;z=5};
+btnDown={cls="button";text="下移";left=108;top=294;right=196;bottom=324;z=6};
+btnDelete={cls="button";text="删除";left=204;top=294;right=292;bottom=324;z=7};
+chkEnabled={cls="checkbox";text="启用当前规则";left=300;top=298;right=452;bottom=322;z=8};
+lblParams={cls="static";text="规则参数：";left=12;top=332;right=452;bottom=352;z=9};
+lblP1={cls="static";left=12;top=358;right=162;bottom=382;hide=1;z=10};
+txtP1={cls="edit";left=166;top=354;right=452;bottom=382;edge=1;hide=1;z=11};
+cmbP1={cls="combobox";left=166;top=354;right=452;bottom=382;edge=1;hide=1;items={};mode="dropdownlist";z=12};
+lblP2={cls="static";left=12;top=388;right=162;bottom=412;hide=1;z=13};
+txtP2={cls="edit";left=166;top=384;right=452;bottom=412;edge=1;hide=1;z=14};
+cmbP2={cls="combobox";left=166;top=384;right=452;bottom=412;edge=1;hide=1;items={};mode="dropdownlist";z=15};
+lblP3={cls="static";left=12;top=418;right=162;bottom=442;hide=1;z=16};
+txtP3={cls="edit";left=166;top=414;right=452;bottom=442;edge=1;hide=1;z=17};
+cmbP3={cls="combobox";left=166;top=414;right=452;bottom=442;edge=1;hide=1;items={};mode="dropdownlist";z=18};
+lblP4={cls="static";left=12;top=448;right=162;bottom=472;hide=1;z=19};
+txtP4={cls="edit";left=166;top=444;right=452;bottom=472;edge=1;hide=1;z=20};
+cmbP4={cls="combobox";left=166;top=444;right=452;bottom=472;edge=1;hide=1;items={};mode="dropdownlist";z=21};
+lblP5={cls="static";left=12;top=478;right=162;bottom=502;hide=1;z=22};
+txtP5={cls="edit";left=166;top=474;right=452;bottom=502;edge=1;hide=1;z=23};
+cmbP5={cls="combobox";left=166;top=474;right=452;bottom=502;edge=1;hide=1;items={};mode="dropdownlist";z=24};
+lblP6={cls="static";left=12;top=508;right=162;bottom=532;hide=1;z=25};
+txtP6={cls="edit";left=166;top=504;right=452;bottom=532;edge=1;hide=1;z=26};
+cmbP6={cls="combobox";left=166;top=504;right=452;bottom=532;edge=1;hide=1;items={};mode="dropdownlist";z=27};
+lblHint={cls="static";left=12;top=540;right=452;bottom=616;z=28};
+lblPreview={cls="static";text="模拟文件名预览（内存数据，不读写真实文件）";left=464;top=12;right=948;bottom=32;z=29};
+lvPreview={cls="listview";left=464;top=36;right=948;bottom=592;edge=1;fullRow=1;gridLines=1;z=30};
+lblStatus={cls="static";text="就绪";left=12;top=602;right=948;bottom=630;edge=1;z=31}
 )
 /*}}*/
 
-//列表列：序号 / 名称 / 所在目录
-winform.lvFiles.columns = {
-	{"序号",70,2/*_LVCFMT_CENTER*/};
-	{"名称",240,0/*_LVCFMT_LEFT*/};
-	{"所在目录",-1,0/*_LVCFMT_LEFT*/}
+//---------- 接管自动布局 ----------
+//
+//aardio 内部默认把「所有」控件都登记进窗体私有表 _ctrlAutoResize，
+//WM_SIZE 时会对它们做按比例缩放（没有 anchors 也照缩：l = 设计时left * scaleX）。
+//这跟下面的 applyLayout 手动排布会互相打架。
+//
+//这里把登记表清空，让内部重排彻底跳过本窗体的全部控件，
+//窗口缩放完全由 applyLayout 决定。
+//（winform.add 会为每个控件写 _ctrlHwnd[hwnd] = 控件对象，据此遍历即可）
+
+for(hwnd,ctrl in winform._ctrlHwnd){
+	winform._ctrlAutoResize[hwnd] = null;
+}
+
+//---------- 布局常量 ----------
+//本窗体不使用设计器的 anchors，改为在 applyLayout 里用 setPos 统一排布，
+//这样才能做到「规则列表填满剩余高度、参数区和说明区贴着底部、预览区随宽度伸缩」。
+
+var M = 12;               //窗体四周外边距
+var GAP = 12;             //左右两列之间的间距
+var LEFT_W = 440;         //左列固定宽度
+var LIST_TOP = 68;        //规则列表顶部（标题与下拉框之下）
+var BTN_H = 30;           //按钮行高度
+var ROW_H = 26;           //参数行高度
+var ROW_STEP = 30;        //参数行行距
+var LBL_PARAM_W = 150;    //参数行标签宽度
+var GAP_PARAM = 4;        //参数行标签与输入的间距
+var LBL_PARAMS_H = 26;    //「规则参数：」标题高度
+var HINT_H = 92;          //左下说明区高度（文字会折行，要留够）
+var STATUS_H = 28;        //状态栏高度
+var MIN_LIST_H = 90;      //规则列表最小高度
+var MIN_RIGHT_W = 360;    //右侧预览区最小宽度
+
+//客户区最小尺寸，防止窗口缩得过小把布局压坏
+var MIN_CLIENT_W = 860;
+var MIN_CLIENT_H = 560;
+
+//---------- 列表列定义 ----------
+
+//四列宽度固定，总和 = LEFT_W(440)，默认打开即可完整看到「状态」列。
+//（之前「状态」列用 -1 走 fillParent 自适应，初始绘制/DPI/重排时容易被挤出可视区。）
+winform.lvRules.columns = {
+	{"#",34,2/*_LVCFMT_CENTER*/};
+	{"类型",90,0/*_LVCFMT_LEFT*/};
+	{"说明",236,0/*_LVCFMT_LEFT*/};
+	{"状态",80,2/*_LVCFMT_CENTER*/}
 };
 
-//输入框为空时显示的浅色提示文本
-winform.txtPrefix.setCueBannerText("例如：vacation_2026_");
+winform.lvPreview.columns = {
+	{"原名称",140,0/*_LVCFMT_LEFT*/};
+	{"目标名称",180,0/*_LVCFMT_LEFT*/};
+	{"变化状态",80,2/*_LVCFMT_CENTER*/};
+	{"说明 / 错误",-1,0/*_LVCFMT_LEFT*/}
+};
 
-//状态文本：统一的操作反馈出口
+//---------- 常量与静态数据 ----------
+
+//六类规则：下拉框显示文本 -> 规则 type 取值
+var RULE_TYPES = {
+	{ text="添加字符"; value=frename.TYPE_ADD_TEXT };
+	{ text="文本替换"; value=frename.TYPE_REPLACE };
+	{ text="正则替换"; value=frename.TYPE_REGEX_REPLACE };
+	{ text="大小写转换"; value=frename.TYPE_CASE_CONVERT };
+	{ text="数字序列"; value=frename.TYPE_SEQUENCE };
+	{ text="日期时间"; value=frename.TYPE_DATE_TIME }
+};
+
+//规则 type -> 显示文本
+var RULE_TYPE_TEXTS = {
+	add_text = "添加字符";
+	replace = "文本替换";
+	regex_replace = "正则替换";
+	case_convert = "大小写转换";
+	sequence = "数字序列";
+	date_time = "日期时间"
+};
+
+//每种规则的默认参数（对应旧版 frontend/src/stores/rule.ts 的 getDefaultParams）
+var defaultParams = function(t){
+	if(t == frename.TYPE_ADD_TEXT) return { text="IMG_"; addPosition="prefix"; customPosition=0 };
+	if(t == frename.TYPE_REPLACE) return { oldText=""; newText=""; caseSensitive=true; replaceScope="all"; scopeParam1=0; scopeParam2="" };
+	if(t == frename.TYPE_REGEX_REPLACE) return { pattern=""; replacement=""; caseSensitive=true };
+	if(t == frename.TYPE_CASE_CONVERT) return { caseType="upper" };
+	if(t == frename.TYPE_SEQUENCE) return { start=1; step=1; digits=3; position="end" };
+	if(t == frename.TYPE_DATE_TIME) return { format="20060102"; position="end"; useFileTime=false };
+	return {};
+}
+
+//每种规则的参数面板定义
+//kind = "edit" 文本输入 / "combo" 下拉选择 / "bool" 是-否选择
+//最多 6 行（文本替换的参数最多）
+//label 不要写太长，参数行标签宽度只有 LBL_PARAM_W，超出会被控件自动折行
+var SCHEMA = {
+	add_text = {
+		{ key="text"; label="添加的文本"; kind="edit" };
+		{ key="addPosition"; label="添加位置"; kind="combo"; texts={"前缀";"后缀";"指定位置"}; values={"prefix";"suffix";"custom"} };
+		//showIf：只有「添加位置」选中 custom 时才显示这一行
+		{ key="customPosition"; label="指定位置（第几字前）"; kind="edit"; showIf={key="addPosition";value="custom"} }
+	};
+	//「替换范围」是主控项，放在第一行；其余参数按所选范围用 showIf 决定显不显示：
+	//   只有选中「查找文本」才需要 oldText 与 caseSensitive（按查找文本匹配替换）；
+	//   其余范围是按位置把目标区间改写成 newText，不需要查找文本，
+	//   只在该范围确实用到的「字符数 / 位置 / 字符」才显示对应的输入框。
+	//「替换为」放在最后：不管选哪个范围它都要用，放最后一行位置才稳定，
+	//   不会随着上面几行的隐藏而上移。
+	replace = {
+		{ key="replaceScope"; label="替换范围"; kind="combo";
+			texts={"查找文本";"前 N 个字符";"后 N 个字符";"指定位置起 N 个字符";"指定字符之后";"指定字符之前";"指定字符之后 N 个";"指定字符之前 N 个"};
+			values={"all";"first_n";"last_n";"after_pos";"after_char";"before_char";"after_char_n";"before_char_n"} };
+		{ key="oldText"; label="查找文本"; kind="edit"; showIf={key="replaceScope";value="all"} };
+		{ key="caseSensitive"; label="区分大小写"; kind="bool"; showIf={key="replaceScope";value="all"} };
+		//需要「字符数 N」的范围
+		{ key="scopeParam1"; label="N（字符数）"; kind="edit"; showIf={key="replaceScope";values={"first_n";"last_n";"after_pos";"after_char_n";"before_char_n"}} };
+		//需要「位置 / 字符」的范围
+		{ key="scopeParam2"; label="位置 / 字符"; kind="edit"; showIf={key="replaceScope";values={"after_pos";"after_char";"before_char";"after_char_n";"before_char_n"}} };
+		//始终显示在最后一行
+		{ key="newText"; label="替换为"; kind="edit" }
+	};
+	//preset 行不是真正的规则参数，只是把常用正则填进 pattern 输入框的快捷方式：
+	//选中某一项后写入 target 指定的参数（第 1 项「自定义」不写入，保留手填的正则）。
+	//注意：aardio 双引号内是原样字符串，反斜杠按字面处理，所以正则可以直接写。
+	regex_replace = {
+		{ key="__preset"; label="常用正则"; kind="preset"; target="pattern";
+			texts={"（自定义）";"数字";"非数字";"字母";"中文字符";"空白";"8 位日期";"年-月-日";"括号内内容";"方括号内内容";"末尾数字"};
+			patterns={"";"\d+";"\D+";"[a-zA-Z]+";"[\x{4e00}-\x{9fa5}]+";"\s+";"\d{8}";"\d{4}-\d{2}-\d{2}";"\([^)]*\)";"\[[^\]]*\]";"\d+$"} };
+		{ key="pattern"; label="正则表达式"; kind="edit" };
+		{ key="replacement"; label="替换为"; kind="edit" };
+		{ key="caseSensitive"; label="区分大小写"; kind="bool" }
+	};
+	case_convert = {
+		{ key="caseType"; label="转换方式"; kind="combo";
+			texts={"全部大写";"全部小写";"首字母大写";"标题格式"};
+			values={"upper";"lower";"first";"title"} }
+	};
+	sequence = {
+		{ key="start"; label="起始值"; kind="edit" };
+		{ key="step"; label="步长"; kind="edit" };
+		{ key="digits"; label="位数（补零）"; kind="edit" };
+		{ key="position"; label="位置"; kind="combo"; texts={"末尾";"开头"}; values={"end";"start"} }
+	};
+	date_time = {
+		{ key="format"; label="格式"; kind="combo";
+			texts={"20060102";"2006-01-02";"200601021504"};
+			values={"20060102";"2006-01-02";"200601021504"} };
+		{ key="position"; label="位置"; kind="combo"; texts={"末尾";"开头"}; values={"end";"start"} };
+		{ key="useFileTime"; label="使用文件修改时间"; kind="bool" }
+	}
+};
+
+//模拟文件名：只存在于内存中，不代表磁盘上的真实文件
+var MOCK_FILES = { "photo.jpg"; "holiday.png"; "报告.txt"; "archive.tar.gz"; ".gitignore" };
+
+//固定测试时间（Unix 秒）：2026-01-02 15:04:05 本地时区
+//模拟数据不提供修改时间，因此日期时间规则一律使用这个时间，保证预览可复现
+var TEST_TS = 1767337445;
+var TEST_TIME = time(TEST_TS);
+
+//---------- 运行时状态 ----------
+
+var rules = {};     //当前规则数组，每项 { type; enabled; params }
+var selRule = 0;    //当前选中的规则下标（1 开始，0 表示未选中）
+var busy = false;   //正在用代码写控件值，避免把程序赋值当成用户输入再回写一次
+
+//---------- 控件分组 ----------
+
+var PARAM_ROWS = 6;
+
+var lblParams_ = { winform.lblP1; winform.lblP2; winform.lblP3; winform.lblP4; winform.lblP5; winform.lblP6 };
+var editParams = { winform.txtP1; winform.txtP2; winform.txtP3; winform.txtP4; winform.txtP5; winform.txtP6 };
+var comboParams = { winform.cmbP1; winform.cmbP2; winform.cmbP3; winform.cmbP4; winform.cmbP5; winform.cmbP6 };
+
+//---------- 小工具 ----------
+
 var setStatus = function(text){
 	winform.lblStatus.text = text;
 }
 
-//把路径数组显示到列表中（只显示，不读写文件）
-var showPaths = function(paths){
-	winform.lvFiles.clear();
+var typeText = function(t){
+	if(type(t) != "string") return "";
+	var s = RULE_TYPE_TEXTS[t];
+	if(type(s) == "string") return s;
+	return t;
+}
 
-	for(i=1;#paths;1){
-		var tPath = io.splitpath(paths[i]);
-		winform.lvFiles.addItem({
-			text = { tostring(i); tPath.file; tPath.dir };
+var countEnabled = function(){
+	var n = 0;
+	for(i=1;#rules;1){
+		if(rules[i].enabled) n = n + 1;
+	}
+	return n;
+}
+
+var schemaOf = function(rule){
+	if(type(rule) != "table") return {};
+	var t = rule.type;
+	if(type(t) != "string") return {};
+	var s = SCHEMA[t];
+	if(type(s) != "table") return {};
+	return s;
+}
+
+//规则的参数表；缺了就补一个空的，避免面板读写时报错
+var paramsOf = function(rule){
+	if(type(rule) != "table") return {};
+	if(type(rule.params) != "table") rule.params = {};
+	return rule.params;
+}
+
+//---------- 自适应布局 ----------
+
+var lastPreviewColW = 0;
+var lastStatusColW = 0;
+
+//把「状态」列（第 4 列）设成填满控件剩余的宽度。
+//setColumnWidth 传的是实际像素（不像 columns 那样再乘 dpiScaleX），
+//这里按控件当前客户区宽减掉前 3 列的实际宽度，保证「状态」列永远完整可见，
+//不会被 DPI 缩放或垂直滚动条挤到可视区之外。
+var fitStatusColumn = function(){
+	var rc = winform.lvRules.clientRect;
+	if(!rc) return;
+
+	var dpiX = winform.lvRules.dpiScaleX : 1;
+	var used = 0;
+
+	for(i=1;3;1){
+		var col = winform.lvRules.getColumn({mask=2/*_LVCF_WIDTH*/}, i);
+		if(col) used = used + (col.cx : 0);
+	}
+
+	var w = (rc.right - rc.left) - used;
+	if(w < 40 * dpiX) w = 40 * dpiX;
+
+	if(w != lastStatusColW){
+		lastStatusColW = w;
+		winform.lvRules.setColumnWidth(w,4);
+	}
+}
+
+//按客户区尺寸重排所有控件
+//cx,cy 省略时用 winform.getClientRect() 现取客户区尺寸。
+//注意不能用 winform.width——顶层窗体的 width 是含边框标题栏的窗口宽度，
+//只有 getClientRect() 才是客户区，两者差约 16 x 39 像素。
+//
+//重要：下面的布局常量都是「设计像素」，而 setPos 用的是「实际像素」（不会自动做 DPI 缩放）；
+//listview 的列宽却是在设计值上被乘过 dpiScaleX 的（见 listview 的 insertColumn 源码）。
+//两边不同步的话，高 DPI 下列宽总和会超过控件可见宽度，最后一列「状态」被挤出可视区。
+//所以这里按同一个 dpiScale 把常量换算成实际像素再排布。
+var applyLayout = function(cx,cy){
+	if(!cx || !cy){
+		var rc = winform.getClientRect();
+		cx,cy = rc.width(),rc.height();
+	}
+	//最小化时客户区为 0，直接跳过，避免把布局算成一堆负数
+	if(!cx || !cy) return;
+
+	//DPI 缩放比例；取不到就按 1 处理
+	//（与列宽缩放用的是同一个属性，保证控件宽度和列宽同步放大）
+	var dpiX = winform.lvRules.dpiScaleX : 1;
+	var dpiY = winform.lvRules.dpiScaleY : 1;
+
+	//把设计尺寸换算成实际像素
+	var mX = M * dpiX;                  var mY = M * dpiY;
+	var leftW = LEFT_W * dpiX;
+	var gapX = GAP * dpiX;
+	var listTop = LIST_TOP * dpiY;
+	var btnH = BTN_H * dpiY;
+	var rowH = ROW_H * dpiY;
+	var rowStep = ROW_STEP * dpiY;
+	var lblParamW = LBL_PARAM_W * dpiX;
+	var gapParam = GAP_PARAM * dpiX;
+	var lblParamsH = LBL_PARAMS_H * dpiY;
+	var hintH = HINT_H * dpiY;
+	var statusH = STATUS_H * dpiY;
+	var minListH = MIN_LIST_H * dpiY;
+	var minRightW = MIN_RIGHT_W * dpiX;
+	var g8y = 8 * dpiY;                //通用垂直间距
+
+	//水平：左列固定宽，右列吃掉剩余宽度
+	var rightX = mX + leftW + gapX;
+	var rightW = cx - rightX - mX;
+	if(rightW < minRightW) rightW = minRightW;
+
+	//垂直：先把贴底的几块固定下来，再由下往上推算
+	var statusTop = cy - mY - statusH;
+	var hintTop = statusTop - g8y - hintH;
+	var paramsBottom = hintTop - g8y;
+
+	var paramsBlockH = PARAM_ROWS * rowH + (PARAM_ROWS - 1) * (rowStep - rowH);
+	var paramsTop = paramsBottom - paramsBlockH;
+	var lblParamsTop = paramsTop - lblParamsH;
+	var btnTop = lblParamsTop - g8y - btnH;
+
+	//规则列表吃掉中间剩下的高度
+	var listH = btnTop - g8y - listTop;
+	if(listH < minListH) listH = minListH;
+
+	//左列
+	winform.lvRules.setPos(mX,listTop,leftW,listH);
+
+	//控件尺寸定下来以后，让「状态」列填满剩余宽度（扣掉滚动条等占用的部分）
+	fitStatusColumn();
+
+	winform.btnUp.setPos(mX,btnTop,88 * dpiX,btnH);
+	winform.btnDown.setPos(mX + 96 * dpiX,btnTop,88 * dpiX,btnH);
+	winform.btnDelete.setPos(mX + 192 * dpiX,btnTop,88 * dpiX,btnH);
+	winform.chkEnabled.setPos(mX + 288 * dpiX,btnTop + 3 * dpiY,leftW - 288 * dpiX,24 * dpiY);
+
+	winform.lblParams.setPos(mX,lblParamsTop,leftW,lblParamsH);
+
+	for(i=1;PARAM_ROWS;1){
+		var top = paramsTop + (i - 1) * rowStep;
+		lblParams_[i].setPos(mX,top + 5 * dpiY,lblParamW,20 * dpiY);
+		editParams[i].setPos(mX + lblParamW + gapParam,top,leftW - lblParamW - gapParam,rowH);
+		comboParams[i].setPos(mX + lblParamW + gapParam,top,leftW - lblParamW - gapParam,rowH);
+	}
+
+	winform.lblHint.setPos(mX,hintTop,leftW,hintH);
+
+	//右列
+	winform.lblPreview.setPos(rightX,mY,rightW,20 * dpiY);
+	winform.lvPreview.setPos(rightX,36 * dpiY,rightW,statusTop - g8y - 36 * dpiY);
+
+	//底部
+	winform.lblStatus.setPos(mX,statusTop,cx - mX * 2,statusH);
+
+	//预览区（右列）最后一列跟随控件宽度
+	//（setColumnWidth 传的是实际像素，不再乘 dpi，所以这里先换算成像素）
+	var previewColW = rightW - 404 * dpiX;
+	if(previewColW < 80 * dpiX) previewColW = 80 * dpiX;
+	if(previewColW != lastPreviewColW){
+		lastPreviewColW = previewColW;
+		winform.lvPreview.setColumnWidth(previewColW,4);
+	}
+}
+
+//---------- 规则列表 ----------
+
+//清空所有行的选中与焦点状态
+//必须做这一步：selIndex 只设置目标行，不会自动取消其他行的选中
+var clearSelection = function(){
+	winform.lvRules.setItemState(0,0,3/*_LVIS_FOCUSED|_LVIS_SELECTED*/);
+}
+
+//整表重建：仅在规则增删/换序时调用
+var rebuildRuleList = function(){
+	busy = true;
+	winform.lvRules.clear();
+
+	for(i=1;#rules;1){
+		var r = rules[i];
+		winform.lvRules.addItem({
+			text = { tostring(i); typeText(r.type); frename.rules.description(r); r.enabled ? "启用" : "禁用" };
 		});
 	}
 
-	setStatus("列表已更新，共 " ++ #paths ++ " 项（仅显示路径，未对文件做任何操作）");
+	if(selRule > #rules) selRule = #rules;
+
+	//先清空再设置，否则旧行的选中状态会残留，界面上出现两行高亮
+	clearSelection();
+	if(selRule > 0){
+		winform.lvRules.selIndex = selRule;
+		winform.lvRules.ensureVisible(selRule);
+	}
+
+	busy = false;
 }
 
-//【选择文件】只打开系统文件对话框并显示所选路径
-winform.btnPickFiles.oncommand = function(id,event){
-	var paths = fsys.dlg.openMulti("所有文件|*.*|","请选择文件",,winform.hwnd);
+//只更新单行文字：改参数 / 改启用状态时用，避免打断输入焦点
+var updateRuleRow = function(i){
+	var r = rules[i];
+	if(type(r) != "table") return;
+	winform.lvRules.setItemText({ tostring(i); typeText(r.type); frename.rules.description(r); r.enabled ? "启用" : "禁用" }, i);
+}
 
-	if(!paths){
-		setStatus("已取消：没有选择任何文件");
+//---------- 参数面板 ----------
+
+//按当前参数值算出「实际要显示的参数定义」列表，已按顺序排好，不满足显示条件的不在里面。
+//
+//showParams 与 collectParams 必须共用这份列表：界面上可见的参数是紧凑排列的
+//（隐藏的行不占位，后面的参数会往上移），两边用同一个顺序才能保证
+//「第 i 行控件」对应「第 i 个可见定义」，读写不会错位。
+var visibleSchema = function(rule){
+	var schema = schemaOf(rule);
+	var params = paramsOf(rule);
+	var out = {};
+
+	for(i=1;PARAM_ROWS;1){
+		var def = schema[i];
+		if(type(def) != "table") continue;
+
+		//条件显示：showIf.value 是单个允许值；showIf.values 是允许值的数组（命中任意一个即显示）
+		if(type(def.showIf) == "table"){
+			var cur = tostring(params[def.showIf.key]);
+			var ok;
+
+			if(type(def.showIf.values) == "table"){
+				ok = false;
+				for(k=1;#def.showIf.values;1){
+					if(def.showIf.values[k] == cur) ok = true;
+				}
+			}
+			else {
+				ok = (cur == def.showIf.value);
+			}
+
+			if(!ok) continue;
+		}
+
+		table.push(out,def);
+	}
+
+	return out;
+}
+
+//把当前选中规则的参数填进面板
+var showParams = function(){
+	var rule = rules[selRule];
+	var schema = visibleSchema(rule);
+
+	busy = true;
+
+	if(type(rule) == "table"){
+		winform.chkEnabled.checked = rule.enabled ? true : false;
+	}
+	else {
+		winform.chkEnabled.checked = false;
+	}
+
+	var params = paramsOf(rule);
+
+	for(i=1;PARAM_ROWS;1){
+		var def = schema[i];
+
+		if(type(def) == "table"){
+			lblParams_[i].text = def.label;
+			lblParams_[i].visible = true;
+
+			if(def.kind == "edit"){
+				editParams[i].visible = true;
+				comboParams[i].visible = false;
+				editParams[i].text = tostring(params[def.key]);
+			}
+			elseif(def.kind == "bool"){
+				editParams[i].visible = false;
+				comboParams[i].visible = true;
+				comboParams[i].items = { "否"; "是" };
+				comboParams[i].selIndex = params[def.key] ? 2 : 1;
+			}
+			elseif(def.kind == "preset"){
+				editParams[i].visible = false;
+				comboParams[i].visible = true;
+				comboParams[i].items = def.texts;
+
+				//当前正则命中哪个常用项就选中它，都没命中则显示第 1 项「自定义」
+				var idx = 1;
+				var cur = tostring(params[def.target]);
+				for(k=1;#def.patterns;1){
+					if(def.patterns[k] == cur) idx = k;
+				}
+				comboParams[i].selIndex = idx;
+			}
+			else {
+				editParams[i].visible = false;
+				comboParams[i].visible = true;
+				comboParams[i].items = def.texts;
+
+				var idx = 1;
+				for(k=1;#def.values;1){
+					if(def.values[k] == params[def.key]) idx = k;
+				}
+				comboParams[i].selIndex = idx;
+			}
+		}
+		else {
+			lblParams_[i].visible = false;
+			editParams[i].visible = false;
+			comboParams[i].visible = false;
+		}
+	}
+
+	busy = false;
+}
+
+//把面板上的值写回当前选中规则
+//说明：所有 edit 的值都按字符串存回。引擎读取参数时用的是
+//frename.rules.numParam / strParam，会把字符串再转成需要的类型，行为不变。
+var collectParams = function(){
+	var rule = rules[selRule];
+	if(type(rule) != "table") return;
+
+	//与 showParams 用同一份可见定义列表，保证「第 i 行控件」对应「第 i 个可见参数」
+	var schema = visibleSchema(rule);
+	var params = paramsOf(rule);
+
+	for(i=1;PARAM_ROWS;1){
+		var def = schema[i];
+		if(type(def) != "table") continue;
+
+		if(def.kind == "edit"){
+			params[def.key] = editParams[i].text;
+		}
+		elseif(def.kind == "bool"){
+			var si = comboParams[i].selIndex;
+			params[def.key] = (si == 2);
+		}
+		elseif(def.kind == "preset"){
+			//常用正则不是真正的规则参数，这里特意不写回：
+			//它的写入由 applyPreset 在「下拉选中」时单独做一次。
+			//如果在这里写，那么每次收集参数都会用下拉的当前选项
+			//覆盖掉用户手填进输入框的正则。
+		}
+		else {
+			var ci = comboParams[i].selIndex;
+			if(!ci) ci = 1;
+			params[def.key] = def.values[ci];
+		}
+	}
+}
+
+//---------- 选中同步 ----------
+//这两个函数必须定义在 showParams 之后：
+//aardio 的局部变量从声明点起才可见，函数体里引用「后面才声明的 var 名字」
+//会被当成全局变量，导致调用时取到 null。
+
+//从控件实时读出「当前操作的是哪一行」
+var currentRow = function(){
+	var idx = winform.lvRules.selIndex;   //最后一次用鼠标点选的项（焦点项）
+	if(idx) return idx;
+
+	var sel = winform.lvRules.selected;
+	if(type(sel) == "table" && #sel > 0) return sel[1];
+
+	return 0;
+}
+
+//把界面选中状态同步到 selRule，并刷新参数面板
+//做成幂等的：无论被调用多少次、由哪个通知触发，结果都只取决于控件的真实状态
+var syncSelectionFromList = function(){
+	if(busy) return;
+
+	var idx = currentRow();
+	if(idx == selRule) return;
+
+	selRule = idx;
+	showParams();
+}
+
+//---------- 预览 ----------
+
+var refreshPreview = function(){
+	var res;
+	var errText;
+
+	//注意：aardio 的 try catch 是立即执行的匿名函数体，
+	//里面的 return 只会跳出 try catch 自身，不会退出本函数。
+	//所以这里只在 catch 里记录错误，真正的返回判断放到 try catch 之后。
+	try{
+		res = frename.preview(MOCK_FILES, rules, TEST_TIME);
+	}
+	catch(e){
+		errText = tostring(e);
+	}
+
+	if(errText){
+		winform.lvPreview.clear();
+		setStatus("预览失败（引擎异常，界面未崩溃）：" ++ errText);
 		return;
 	}
 
-	showPaths(paths);
-}
-
-//【选择文件夹】只打开系统文件夹对话框并显示所选路径
-winform.btnPickDir.oncommand = function(id,event){
-	var dir = fsys.dlg.dir(,winform.hwnd,"请选择文件夹");
-
-	if(!dir){
-		setStatus("已取消：没有选择任何文件夹");
+	if(type(res) != "table"){
+		winform.lvPreview.clear();
+		setStatus("预览失败：引擎没有返回结果");
 		return;
 	}
 
-	showPaths({ dir });
-	setStatus("已选择文件夹：" ++ dir ++ "（仅显示路径，未对文件做任何操作）");
+	winform.lvPreview.clear();
+
+	for(i=1;#res;1){
+		var r = res[i];
+
+		var status;
+		if(r.error) status = "错误";
+		elseif(r.changed) status = "已变化";
+		else status = "未变化";
+
+		winform.lvPreview.addItem({
+			text = { r.originalName; r.newName; status; r.error ? tostring(r.error) : "" };
+		});
+	}
+
+	var st = frename.statistics(res);
+
+	setStatus("规则 " ++ #rules ++ " 条（启用 " ++ countEnabled() ++ " 条）"
+		++ " ｜ 预览 " ++ st.totalFiles ++ " 项：变化 " ++ st.changedFiles
+		++ "，未变化 " ++ st.unchangedFiles ++ "，错误 " ++ st.errorFiles
+		++ " ｜ 时间来源：固定测试时间 " ++ tostring(TEST_TIME,"%Y-%m-%d %H:%M:%S"));
 }
 
-//【测试交互】只更新状态文本，用于确认事件链路可用
-winform.btnTest.oncommand = function(id,event){
-	var prefix = winform.txtPrefix.text;
-	if(!#prefix) prefix = "(未填写)";
+//---------- 操作 ----------
 
-	setStatus("测试交互成功：文件名前缀 = " ++ prefix
-		++ "，列表 " ++ winform.lvFiles.count ++ " 项"
-		++ "，时间 " ++ tostring(time.now(),"%H:%M:%S"));
+var addRule = function(){
+	var si = winform.cmbRuleType.selIndex;
+	if(!si) si = 1;
+
+	var t = RULE_TYPES[si].value;
+	table.push(rules, { type=t; enabled=true; params=defaultParams(t) });
+	selRule = #rules;
+
+	rebuildRuleList();
+	showParams();
+	refreshPreview();
+	setStatus("已添加规则：" ++ RULE_TYPES[si].text);
 }
 
-setStatus("就绪：请选择文件或文件夹，并填写文件名前缀");
+var deleteRule = function(){
+	if(!selRule){
+		setStatus("请先选择一条规则");
+		return;
+	}
+
+	var text = typeText(rules[selRule].type);
+	table.remove(rules, selRule);
+
+	if(selRule > #rules) selRule = #rules;
+
+	rebuildRuleList();
+	showParams();
+	refreshPreview();
+	setStatus("已删除规则：" ++ text);
+}
+
+var moveRule = function(delta){
+	if(!selRule){
+		setStatus("请先选择一条规则");
+		return;
+	}
+
+	var j = selRule + delta;
+	if(j < 1 || j > #rules){
+		setStatus("已经到边界了，无法再移动");
+		return;
+	}
+
+	var tmp = rules[selRule];
+	rules[selRule] = rules[j];
+	rules[j] = tmp;
+	selRule = j;
+
+	rebuildRuleList();
+	showParams();
+	refreshPreview();
+	setStatus("已移动规则，当前位置 " ++ selRule);
+}
+
+//---------- 事件绑定 ----------
+
+winform.btnAdd.oncommand = function(id,event){
+	addRule();
+}
+
+winform.btnDelete.oncommand = function(id,event){
+	deleteRule();
+}
+
+winform.btnUp.oncommand = function(id,event){
+	moveRule(-1);
+}
+
+winform.btnDown.oncommand = function(id,event){
+	moveRule(1);
+}
+
+winform.chkEnabled.oncommand = function(id,event){
+	if(busy) return;
+
+	var rule = rules[selRule];
+	if(type(rule) != "table"){
+		//选中状态和记录不一致时，先把界面同步回来再提示
+		setStatus("请先选择一条规则");
+		return;
+	}
+
+	rule.enabled = winform.chkEnabled.checked ? true : false;
+
+	//只改这一行的文字，不重建列表，避免抢走复选框的焦点
+	updateRuleRow(selRule);
+	refreshPreview();
+
+	//启用状态变化要改整行灰度；文字没变时 setItemText 可能不触发重绘，
+	//主动让列表重画，customdraw 会按 rules[i].enabled 重新着色
+	winform.lvRules.invalidate();
+	winform.lvRules.update();
+}
+
+//选中同步：同时挂 onItemChanged 与 onSelChanged 两个通知。
+//两者都可能漏报（见文件顶部说明），但 syncSelectionFromList 是幂等的，
+//真正以控件当前状态为准，所以重复触发不会出问题。
+winform.lvRules.onItemChanged = function(item,subItem,nm){
+	syncSelectionFromList();
+}
+
+winform.lvRules.onSelChanged = function(selected,item,subItem,nm){
+	syncSelectionFromList();
+}
+
+//自定义绘制：禁用的规则整行灰度显示。
+//列表已用「状态」列显示「启用 / 禁用」文字（见 rebuildRuleList），这里额外把禁用行变灰。
+//颜色按 rules[i].enabled 实时评估，改勾选后由下一行 updateRow 触发的重绘自动刷新，
+//不需要再单独维护每行的颜色状态。
+winform.lvRules.onnotify = function(id,code,ptr){
+	//只接管 NM_CUSTOMDRAW，其余通知（LVN_xxx 等）原样交给默认处理
+	if(code != 0xFFFFFFF4/*_NM_CUSTOMDRAW*/) return;
+
+	var lvcd = winform.lvRules.getNotifyCustomDraw(code, ptr);
+	if(!lvcd) return;
+
+	var stage = lvcd.nmcd.dwDrawStage;
+
+	if(stage == 0x1/*_CDDS_PREPAINT*/){
+		//订阅每一项的 pre-paint 通知
+		return 0x20/*_CDRF_NOTIFYITEMDRAW*/;
+	}
+
+	if(stage == 0x10001/*_CDDS_ITEMPREPAINT*/){
+		//listview 行号从 0 开始，rules 下标从 1 开始
+		var i = lvcd.nmcd.dwItemSpec + 1;
+		var rule = rules[i];
+		var disabled = (type(rule) == "table" && !rule.enabled);
+
+		//COLORREF 是 0xBBGGRR；灰度三通道相等，无字节序问题
+		lvcd.clrText = disabled ? 0x808080 : 0x000000;
+		lvcd.update();
+
+		//用上面设置的颜色画文字
+		return 0x20/*_CDRF_NEWFONT*/;
+	}
+
+	//其他阶段交给系统默认处理
+	return 0/*_CDRF_DODEFAULT*/;
+}
+
+//把「常用正则」下拉选中的正则写入目标参数，并同步显示到目标输入框。
+//只在下拉选中时调用一次；第 1 项「（自定义）」不写入，保留手填的正则。
+var applyPreset = function(){
+	var rule = rules[selRule];
+	if(type(rule) != "table") return;
+
+	var sc = visibleSchema(rule);
+	var params = paramsOf(rule);
+
+	for(i=1;PARAM_ROWS;1){
+		var d = sc[i];
+		if(type(d) != "table" || d.kind != "preset") continue;
+
+		var pi = comboParams[i].selIndex;
+		if(!pi || pi <= 1 || !d.target) continue;
+
+		var v = d.patterns[pi];
+		params[d.target] = v;
+
+		//同步到目标输入框，否则界面上看不到刚选的正则
+		for(j=1;PARAM_ROWS;1){
+			if(type(sc[j]) == "table" && sc[j].key == d.target){
+				busy = true;
+				editParams[j].text = v;
+				busy = false;
+			}
+		}
+	}
+}
+
+//手改了某个输入框之后：如果它是「常用正则」的目标，就把常用正则拉回「（自定义）」。
+//否则下拉仍停在某个预设项上，下一次参数收集就会用那个预设覆盖掉刚手填的内容。
+var resetPresetOf = function(row){
+	var rule = rules[selRule];
+	if(type(rule) != "table") return;
+
+	var sc = visibleSchema(rule);
+	var def = sc[row];
+	if(type(def) != "table") return;
+
+	for(k=1;PARAM_ROWS;1){
+		var d = sc[k];
+		if(type(d) == "table" && d.kind == "preset" && d.target == def.key){
+			busy = true;
+			comboParams[k].selIndex = 1;
+			busy = false;
+		}
+	}
+}
+
+//参数变化：把面板写回规则后，只更新当前行文字和预览（不重建列表，避免打断输入）
+//
+//row 是触发变化的控件所在行，isCombo 表示来自下拉框还是文本输入框。
+//下拉框：可能改变「条件显示」的行，也可能刚选了常用正则，需要重排参数面板；
+//文本框：每次按键都触发，重排会把光标顶到末尾、打断连续输入，所以不重排，
+//        只在它恰好是常用正则的目标时，把常用正则拉回「（自定义）」。
+var onParamChanged = function(row,isCombo){
+	if(busy) return;
+
+	collectParams();
+
+	if(isCombo){
+		applyPreset();
+
+		var sc = schemaOf(rules[selRule]);
+		var needRebuild = false;
+
+		for(k=1;PARAM_ROWS;1){
+			var d = sc[k];
+			if(type(d) == "table" && (type(d.showIf) == "table" || d.kind == "preset")) needRebuild = true;
+		}
+
+		if(needRebuild) showParams();
+	}
+	elseif(row){
+		resetPresetOf(row);
+	}
+
+	updateRuleRow(selRule);
+	refreshPreview();
+}
+
+//用函数包一层再绑定：参数 row 每次调用都是独立的，
+//避免直接在 for 里写闭包时捕获到同一个循环变量
+var bindCombo = function(row,ctrl){
+	ctrl.onSelChange = function(){
+		onParamChanged(row,true);
+	}
+}
+
+var bindEdit = function(row,ctrl){
+	ctrl.onChange = function(){
+		onParamChanged(row,false);
+	}
+}
+
+for(i=1;PARAM_ROWS;1){
+	bindEdit(i, editParams[i]);
+	bindCombo(i, comboParams[i]);
+}
+
+//---------- 初始化 ----------
+
+var typeItems = {};
+for(i=1;#RULE_TYPES;1){
+	table.push(typeItems, RULE_TYPES[i].text);
+}
+winform.cmbRuleType.items = typeItems;
+winform.cmbRuleType.selIndex = 1;
+
+//说明文字必须用单引号（编译时转义字符串）写换行符，
+//双引号里的 "\r\n" 是 4 个字面字符，static 控件不会把它当成换行。
+winform.lblHint.text = "说明："
+	++ '\r\n' ++ "1. 预览只对内存文件名做计算，不读写磁盘、不重命名文件。"
+	++ '\r\n' ++ "2. 模拟数据：" ++ string.join(MOCK_FILES,"、")
+	++ '\r\n' ++ "3. 日期时间规则一律使用固定测试时间 "
+	++ tostring(TEST_TIME,"%Y-%m-%d %H:%M:%S") ++ "。";
+
+showParams();
+refreshPreview();
+
+//窗口缩放时重排；onSize 即 adjust 事件，参数是客户区宽高
+winform.onSize = function(cx,cy,wParam){
+	applyLayout(cx,cy);
+}
+
+//按当前客户区先排一次
+applyLayout();
+
+//限制窗口最小尺寸，避免缩得过小把控件压重叠
+win.ui.minmax(winform,MIN_CLIENT_W,MIN_CLIENT_H);
 
 //返回窗体对象，main.aardio 中的 win.loadForm 会接收此返回值
 return winform;

@@ -94,6 +94,9 @@ var cases = {
 		rules={ {type="replace";enabled=true;params={oldText="t";newText="X";caseSensitive=true;replaceScope="all"}} };
 		expect={"daXa.XxX"}; changed={true} };
 
+	//B6 ~ B13：这些范围不是按查找文本匹配，而是直接按位置把目标区间改写成 newText，
+	//所以 oldText 故意写 "zz"（在文件名里根本不存在）也照样替换。
+	//界面上选了这些范围时不会显示「查找文本」和「区分大小写」两行。
 	{ id="B6"; files={"hello.txt"};
 		rules={ {type="replace";enabled=true;params={oldText="zz";newText="AB";caseSensitive=true;replaceScope="first_n";scopeParam1=2}} };
 		expect={"ABllo.txt"}; changed={true} };

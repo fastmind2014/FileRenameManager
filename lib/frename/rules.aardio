@@ -83,6 +83,23 @@ namespace frename.rules{
 		return "20060102";
 	}
 
+	//替换范围的文字说明，用于规则描述，与界面下拉项的文字对应。
+	//按位置改写的范围会把各自的 N / 位置 / 字符也写进描述，方便在规则列表里直接看懂。
+	replaceScopeDesc = function(rule,scope){
+		var n = ..frename.rules.numParam(rule,"scopeParam1",0);
+		var p2 = ..frename.rules.strParam(rule,"scopeParam2","");
+
+		if(scope == "first_n") return "前 " ++ tostring(n) ++ " 个字符";
+		if(scope == "last_n") return "后 " ++ tostring(n) ++ " 个字符";
+		if(scope == "after_pos") return "第 " ++ tostring(..frename.rules.numParam(rule,"scopeParam2",0)) ++ " 位起 " ++ tostring(n) ++ " 个字符";
+		if(scope == "after_char") return "'" ++ p2 ++ "' 之后";
+		if(scope == "before_char") return "'" ++ p2 ++ "' 之前";
+		if(scope == "after_char_n") return "'" ++ p2 ++ "' 之后 " ++ tostring(n) ++ " 个";
+		if(scope == "before_char_n") return "'" ++ p2 ++ "' 之前 " ++ tostring(n) ++ " 个";
+
+		return "查找文本";
+	}
+
 	//rules/replace.go ParseReplaceScope（未知值回退为 all）
 	parseReplaceScope = function(scope){
 		var s = tostring(scope);
@@ -163,6 +180,7 @@ namespace frename.rules{
 		var p2 = ..frename.rules.strParam(rule,"scopeParam2","");
 
 		//以下范围分支不使用 oldText，直接按位置改写，与 rules/replace.go 的 switch 一致
+		//（界面上只有选中「查找文本」范围时才会显示查找文本与区分大小写两行）
 		if(scope == "first_n"){
 			if(n <= 0) return name;
 			stem,ext = ..frename.nameutil.splitExt(name);
@@ -384,12 +402,21 @@ namespace frename.rules{
 		}
 
 		if(t == "replace"){
+			var newText = ..frename.rules.strParam(rule,"newText","");
+			var scope = ..frename.rules.parseReplaceScope( ..frename.rules.strParam(rule,"replaceScope","") );
+
+			//只有「查找文本」范围是按查找文本匹配的；其余范围按位置改写，
+			//没有查找文本可显示，所以改成描述所选范围，避免说明里出现空的查找文本
+			if(scope != "all"){
+				return "文本替换[" ++ ..frename.rules.replaceScopeDesc(rule,scope) ++ "]: → " ++ newText;
+			}
+
 			var caseStr = "";
 			if(!..frename.rules.boolParam(rule,"caseSensitive")) caseStr = "(忽略大小写)";
 			return "文本替换: "
 				++ ..frename.rules.strParam(rule,"oldText","")
 				++ " → "
-				++ ..frename.rules.strParam(rule,"newText","")
+				++ newText
 				++ " " ++ caseStr;
 		}
 
