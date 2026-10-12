@@ -1,0 +1,246 @@
+// frename.renameplan —— 安全重命名执行层（纯逻辑 + 内存模拟）
+//
+// 职责：
+//   1. 把「源路径 -> 目标路径」整理成一份两阶段的重命名计划（RenamePlan）
+//   2. 在内存中模拟执行这份计划，验证它是否真的能走通
+//   3. 记录 Undo 日志，支持把已执行的步骤逆序撤销
+//
+// 为什么需要两阶段：
+//   直接按顺序改名时，如果 A 要改成 B，而 B 本身也是本批次待改名的文件，
+//   那么 A->B 会失败（B 已被占用），这就是经典的循环依赖问题。
+//   两阶段的做法是先把所有源文件改到一个唯一的临时名，
+//   再把临时名改到最终目标名；这样每个阶段内部都不会互相撞车。
+//
+// 严格限制：本模块只做计划与内存模拟。
+// 它不创建、修改、移动、删除或重命名任何真实文件，
+// 也没有提供任何直接操作磁盘的接口。
+
+import frename.filescan;
+import frename.precheck;
+
+namespace frename.renameplan{
+
+	//临时文件名前缀：以 "~" 开头，Windows 下合法，也不容易和用户文件混淆。
+	//用固定前缀还有一个好处：普通目标名几乎不可能长这样，
+	//因此临时名不会意外撞上某个目标名。
+	TEMP_PREFIX = "~$rename_";
+
+	//生成一个不冲突的临时文件名（与源文件同目录、保留原扩展名）
+	//existsFn 用于确认候选名当前没有撞上已存在的文件
+	tempName = function(dir,index,ext,existsFn){
+		for(attempt=0;attempt<1000;1++){
+			var name = ..frename.renameplan.TEMP_PREFIX
+				++ tostring(index) ++ "_" ++ tostring(attempt) ++ ext;
+			var path = ..io.joinpath(dir,name);
+
+			if(!existsFn(path)) return path;
+		}
+
+		return null;	//极端情况下没能生成不冲突的临时名
+	}
+
+	//生成两阶段重命名计划
+	//
+	//items 每项为表（precheck.check 接受的输入）：
+	//   sourcePath / targetPath / targetName / changed / error
+	//existsFn 可选：function(path) 返回该路径当前是否存在。
+	//   默认用 io.exist；测试时可注入纯内存的假实现。
+	//
+	//返回表：
+	//   operations 可执行的操作，每项 { index; sourcePath; targetPath; tempPath; status }
+	//   steps      执行步骤，阶段1全部在前、阶段2全部在后，
+	//              每项 { phase; from; to; index }
+	//   blocked    不参与执行的项及原因，每项 { index; sourcePath; reason }
+	//   warningCount  其中带风险（链式依赖等）的操作数量
+	build = function(items,existsFn){
+		if(type(items) != "table") return {};
+
+		if(!existsFn){
+			existsFn = function(p){
+				return ..io.exist(p) ? true : false;
+			}
+		}
+
+		//先做一次预检，拿到每项的 status / 占用分类
+		..frename.precheck.check(items,existsFn);
+
+		var operations = {};
+		var blocked = {};
+		var warningCount = 0;
+
+		for(i=1;#items;1){
+			var it = items[i];
+			if(type(it) != "table") continue;
+
+			//名称没变：不需要执行
+			if(!it.changed){
+				..table.push(blocked,{ index=i; sourcePath=it.sourcePath; reason="名称未变化，无需执行" });
+				continue;
+			}
+
+			//预检判定为错误：不能进计划
+			if(it.status == "error"){
+				..table.push(blocked,{ index=i; sourcePath=it.sourcePath; reason=..frename.precheck.reasonText(it) });
+				continue;
+			}
+
+			if(it.status == "warning") warningCount = warningCount + 1;
+
+			var info = ..io.splitpath(it.sourcePath);
+			var temp = ..frename.renameplan.tempName(info.dir,i,info.ext,existsFn);
+
+			if(!temp){
+				..table.push(blocked,{ index=i; sourcePath=it.sourcePath; reason="无法生成不冲突的临时文件名" });
+				continue;
+			}
+
+			..table.push(operations,{
+				index = i;
+				sourcePath = it.sourcePath;
+				targetPath = it.targetPath;
+				tempPath = temp;
+				status = it.status;
+			});
+		}
+
+		//两阶段步骤：先把全部源文件转入临时名，再全部转入最终目标名
+		var steps = {};
+
+		for(i=1;#operations;1){
+			var op = operations[i];
+			..table.push(steps,{ phase=1; from=op.sourcePath; to=op.tempPath; index=op.index });
+		}
+
+		for(i=1;#operations;1){
+			var op = operations[i];
+			..table.push(steps,{ phase=2; from=op.tempPath; to=op.targetPath; index=op.index });
+		}
+
+		return {
+			operations = operations;
+			steps = steps;
+			blocked = blocked;
+			warningCount = warningCount;
+		};
+	}
+
+	//在内存中模拟执行计划（不碰真实文件）
+	//
+	//内存里维护一份「当前存在哪些文件」的集合（键为 pathKey），
+	//逐步检查「来源存在、目标不存在」后再更新集合。
+	//
+	//返回表：
+	//   executed 成功执行的步骤
+	//   failed   失败的步骤及原因（来源不存在 / 目标已被占用）
+	//   undoLog  与 executed 相同，单独放一份便于阅读与持久化
+	//   state    模拟结束后的文件集合（键为 pathKey，值为路径）
+	//   doneCount 成功步数
+	simulate = function(plan,existsFn){
+		if(type(plan) != "table") return {};
+
+		if(!existsFn){
+			existsFn = function(p){
+				return ..io.exist(p) ? true : false;
+			}
+		}
+
+		var state = {};
+		var executed = {};
+		var failed = {};
+
+		//初始状态：只把「确实存在」的源文件放进内存集合
+		if(type(plan.operations) == "table"){
+			for(i=1;#plan.operations;1){
+				var op = plan.operations[i];
+				if(existsFn(op.sourcePath)){
+					var k = ..frename.filescan.pathKey(op.sourcePath);
+					state[[k]] = op.sourcePath;
+				}
+			}
+		}
+
+		if(type(plan.steps) == "table"){
+			for(i=1;#plan.steps;1){
+				var s = plan.steps[i];
+				var fromKey = ..frename.filescan.pathKey(s.from);
+				var toKey = ..frename.filescan.pathKey(s.to);
+
+				//前置检查：来源必须存在，目标必须没有被占用
+				if(!state[[fromKey]]){
+					..table.push(failed,{
+						step = i; phase = s.phase; from = s.from; to = s.to;
+						reason = "来源文件不存在（可能已被移动或删除）";
+					});
+					continue;
+				}
+
+				if(state[[toKey]]){
+					..table.push(failed,{
+						step = i; phase = s.phase; from = s.from; to = s.to;
+						reason = "目标路径已被占用";
+					});
+					continue;
+				}
+
+				//更新内存集合：这只是内存里的键搬移，不触碰磁盘
+				var path = state[[fromKey]];
+				state[[fromKey]] = null;
+				state[[toKey]] = path;
+
+				..table.push(executed,{ step=i; phase=s.phase; from=s.from; to=s.to; index=s.index });
+			}
+		}
+
+		return {
+			executed = executed;
+			failed = failed;
+			undoLog = executed;
+			state = state;
+			doneCount = #executed;
+		};
+	}
+
+	//根据模拟执行结果生成撤销计划：把已执行的步骤逆序改回去。
+	//逆序是为了让中间状态始终一致（例如先把临时名改回原名，再处理后续步骤）。
+	//
+	//返回表 { steps; count }，同样只是计划，不碰真实文件。
+	undoPlan = function(simulated){
+		var steps = {};
+		if(type(simulated) != "table" || type(simulated.executed) != "table"){
+			return { steps=steps; count=0 };
+		}
+
+		for(i=#simulated.executed;i>=1;i--){
+			var e = simulated.executed[i];
+			..table.push(steps,{
+				phase = e.phase;
+				from = e.to;
+				to = e.from;
+				index = e.index;
+				undo = true;
+			});
+		}
+
+		return { steps=steps; count=#simulated.executed };
+	}
+
+	//撤销是否可用：只要执行过步骤就可以撤销
+	canUndo = function(simulated){
+		if(type(simulated) != "table") return false;
+		if(type(simulated.executed) != "table") return false;
+		return (#simulated.executed > 0);
+	}
+
+	//把 Undo 日志格式化成一行行文本，便于界面或控制台查看
+	undoLogText = function(simulated){
+		if(type(simulated) != "table" || type(simulated.undoLog) != "table") return "";
+
+		var s = "";
+		for(i=1;#simulated.undoLog;1){
+			var e = simulated.undoLog[i];
+			if(#s) s = s ++ '\r\n';
+			s = s ++ "阶段" ++ e.phase ++ "：" ++ e.from ++ "  →  " ++ e.to;
+		}
+		return s;
+	}
+}

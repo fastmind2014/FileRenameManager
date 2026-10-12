@@ -1,0 +1,205 @@
+// frename.renameplan —— 两阶段重命名执行层测试（纯内存，不触碰真实磁盘）
+//
+// 运行方式：在 aardio IDE 中打开本文件，按 F5（运行）。
+//
+// 本测试完全不接触真实磁盘：
+//   - 所有路径都只是内存中的字符串
+//   - 「某个路径当前是否存在」由 makeExists 造的假函数提供
+// 因此不会读取、创建、修改、移动、删除或重命名任何真实文件。
+
+import console;
+import frename.filescan;
+import frename.precheck;
+import frename.renameplan;
+
+//true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
+console.open(true);
+
+var passed = 0;
+var failed = 0;
+
+var expect = function(ok,id,desc,detail){
+	if(ok){
+		passed = passed + 1;
+	}
+	else {
+		failed = failed + 1;
+		console.log("✗ " ++ id ++ " " ++ desc ++ (detail ? ("：" ++ detail) : ""));
+	}
+}
+
+//造一个「指定路径存在」的假函数；按 pathKey 比较，模拟 Windows 不区分大小写
+var makeExists = function(paths){
+	var set = {};
+
+	if(type(paths) == "table"){
+		for(i=1;#paths;1){
+			set[[ ..frename.filescan.pathKey(paths[i]) ]] = true;
+		}
+	}
+
+	return function(p){
+		return set[[ ..frename.filescan.pathKey(p) ]] ? true : false;
+	};
+}
+
+//内存集合里是否包含某路径（state 的键是 pathKey）
+var stateHas = function(state,path){
+	return state[[ ..frename.filescan.pathKey(path) ]] ? true : false;
+}
+
+console.log("=========================================================");
+console.log("frename.renameplan —— 两阶段重命名执行层测试（纯内存）");
+console.log("=========================================================");
+
+//================ 一、简单改名 =================
+
+var t1 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true}
+}, makeExists({ 'C:\\t\\a.txt' }));
+
+expect( #t1.operations == 1, "T1a","简单改名应生成 1 个可执行操作", "实际=" ++ #t1.operations );
+expect( #t1.steps == 2, "T1b","简单改名应有 2 个步骤（两阶段）", "实际=" ++ #t1.steps );
+expect( #t1.blocked == 0, "T1c","简单改名不应有被拦截项", "实际=" ++ #t1.blocked );
+expect( t1.steps[1].phase == 1 && t1.steps[2].phase == 2, "T1d","步骤顺序应是先阶段 1 再阶段 2" );
+
+var s1 = frename.renameplan.simulate(t1, makeExists({ 'C:\\t\\a.txt' }));
+
+expect( s1.doneCount == 2 && #s1.failed == 0, "T1e","模拟执行应全部成功",
+	"成功=" ++ s1.doneCount ++ " 失败=" ++ #s1.failed );
+expect( stateHas(s1.state,'C:\\t\\b.txt') && !stateHas(s1.state,'C:\\t\\a.txt'),
+	"T1f","模拟后应只有目标文件存在" );
+
+//================ 二、链式 A→B、B→C（核心）=================
+//直接顺序执行时 A->B 会因 B 已被占用而失败；两阶段应能全部走通
+
+var t2 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=true}
+}, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' }));
+
+expect( #t2.operations == 2, "T2a","链式改名应生成 2 个可执行操作", "实际=" ++ #t2.operations );
+expect( #t2.blocked == 0, "T2b","链式改名的两项都不应被拦截", "实际=" ++ #t2.blocked );
+expect( #t2.steps == 4, "T2c","链式改名应有 4 个步骤", "实际=" ++ #t2.steps );
+
+//前一半是阶段 1（进临时名），后一半是阶段 2（进最终名）
+expect( t2.steps[1].phase == 1 && t2.steps[2].phase == 1
+	&& t2.steps[3].phase == 2 && t2.steps[4].phase == 2,
+	"T2d","两阶段顺序应是 1,1,2,2", "实际=" ++ t2.steps[1].phase ++ "," ++ t2.steps[2].phase
+	++ "," ++ t2.steps[3].phase ++ "," ++ t2.steps[4].phase );
+
+//阶段 1 的两个来源就是原始源文件
+expect( t2.steps[1].from == 'C:\\t\\a.txt' && t2.steps[2].from == 'C:\\t\\b.txt',
+	"T2e","阶段 1 的来源应是原始源文件" );
+
+//阶段 2 的目标应是最终目标，且来源是阶段 1 的临时名
+expect( t2.steps[3].to == 'C:\\t\\b.txt' && t2.steps[4].to == 'C:\\t\\c.txt',
+	"T2f","阶段 2 的目标应是最终目标" );
+expect( t2.steps[3].from == t2.steps[1].to && t2.steps[4].from == t2.steps[2].to,
+	"T2g","阶段 2 的来源应是阶段 1 的临时名" );
+
+var s2 = frename.renameplan.simulate(t2, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' }));
+
+expect( s2.doneCount == 4 && #s2.failed == 0, "T2h","链式改名的模拟执行应全部成功",
+	"成功=" ++ s2.doneCount ++ " 失败=" ++ #s2.failed );
+//链式执行后：a.txt 的内容落到 b.txt，原 b.txt 的内容落到 c.txt，
+//所以 b.txt 与 c.txt 都应存在，只有 a.txt 消失
+expect( stateHas(s2.state,'C:\\t\\b.txt') && stateHas(s2.state,'C:\\t\\c.txt')
+	&& !stateHas(s2.state,'C:\\t\\a.txt'),
+	"T2i","链式执行后应存在 b.txt 与 c.txt，且不再有 a.txt" );
+
+//临时名不能与已存在的文件撞上（用同一个内存集合判断，不碰磁盘）
+var initSet = makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' });
+var tempInSet = false;
+for(i=1;#t2.steps;1){
+	if(t2.steps[i].phase != 1) continue;
+	if(initSet(t2.steps[i].to)) tempInSet = true;
+}
+expect( !tempInSet, "T2j","临时名不应与已存在的文件冲突" );
+
+//================ 三、循环 A→B、B→C、C→A =================
+
+var t3 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=true};
+	{sourcePath='C:\\t\\c.txt'; targetPath='C:\\t\\a.txt'; targetName="a.txt"; changed=true}
+}, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' }));
+
+var s3 = frename.renameplan.simulate(t3, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' }));
+
+expect( #t3.operations == 3, "T3a","循环改名应生成 3 个操作", "实际=" ++ #t3.operations );
+expect( s3.doneCount == 6 && #s3.failed == 0, "T3b","循环改名的模拟执行应全部成功",
+	"成功=" ++ s3.doneCount ++ " 失败=" ++ #s3.failed );
+expect( stateHas(s3.state,'C:\\t\\b.txt') && stateHas(s3.state,'C:\\t\\c.txt') && stateHas(s3.state,'C:\\t\\a.txt'),
+	"T3c","循环改名后三个目标都应存在" );
+
+//================ 四、不能执行的三种情况 =================
+
+//多个文件生成同一目标
+var t4 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true}
+}, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' }));
+
+expect( #t4.operations == 0 && #t4.blocked == 2, "T4","重复目标的两项都应被拦截",
+	"操作=" ++ #t4.operations ++ " 拦截=" ++ #t4.blocked );
+
+//目标被本批次之外的文件占用
+var t5 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true}
+}, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' }));
+
+expect( #t5.operations == 0 && #t5.blocked == 1, "T5","目标被批次外占用应被拦截",
+	"操作=" ++ #t5.operations ++ " 拦截=" ++ #t5.blocked );
+
+//名称没变
+var t6 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\a.txt'; targetName="a.txt"; changed=false}
+}, makeExists({ 'C:\\t\\a.txt' }));
+
+expect( #t6.operations == 0 && #t6.blocked == 1, "T6","未变化项应被拦截",
+	"操作=" ++ #t6.operations ++ " 拦截=" ++ #t6.blocked );
+
+//================ 五、Undo 日志与撤销 =================
+
+var undo = frename.renameplan.undoPlan(s2);
+
+expect( frename.renameplan.canUndo(s2), "T7a","执行过步骤后应可以撤销" );
+expect( #undo.steps == 4, "T7b","撤销步骤数应等于已执行步数", "实际=" ++ #undo.steps );
+
+//撤销是逆序：第一步撤的是最后执行的阶段 2 步骤
+expect( undo.steps[1].from == s2.executed[4].to && undo.steps[1].to == s2.executed[4].from,
+	"T7c","撤销第一步应逆序撤掉最后执行的步骤" );
+
+//逆序检查：撤销步骤整体是已执行步骤的反转
+var reverseOk = true;
+for(i=1;#undo.steps;1){
+	var u = undo.steps[i];
+	var e = s2.executed[#s2.executed - i + 1];
+	if(u.from != e.to || u.to != e.from) reverseOk = false;
+}
+expect( reverseOk, "T7d","撤销步骤应是已执行步骤的逆序反转" );
+
+//没有执行过任何步骤时不应可撤销
+expect( !frename.renameplan.canUndo({}), "T7e","未执行任何步骤时不应可撤销" );
+
+//撤销日志文本应包含箭头
+var logText = frename.renameplan.undoLogText(s2);
+expect( ..string.indexOf(logText,"→") && ..string.indexOf(logText,'C:\\t\\c.txt'),
+	"T7f","Undo 日志文本应包含目标路径与箭头" );
+
+//================ 六、统计 =================
+
+//链式改名里只有「目标被本批次源文件占用」的那一项是 warning（A→B，而 B 还在批次里），
+//另一项 B→C 的目标 c.txt 不存在，预检仍是 ok；但两项两阶段都能执行
+expect( t2.warningCount == 1, "T8","链式改名应只有 1 项标记为有风险",
+	"实际=" ++ t2.warningCount );
+
+//简单改名没有风险
+expect( t1.warningCount == 0, "T8b","简单改名不应有风险项", "实际=" ++ t1.warningCount );
+
+console.log("---------------------------------------------------------");
+console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
+console.log("---------------------------------------------------------");
+
+console.pause();

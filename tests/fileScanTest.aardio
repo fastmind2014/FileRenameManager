@@ -20,7 +20,7 @@ var passed = 0;
 var failed = 0;
 
 //断言：ok 为真记通过，否则打印失败明细
-var assert = function(ok,id,desc,detail){
+var expect = function(ok,id,desc,detail){
 	if(ok){
 		passed = passed + 1;
 	}
@@ -51,17 +51,17 @@ console.log("=========================================================");
 
 //================ 一、路径规范化与比较键 =================
 
-assert( ..frename.filescan.pathKey('C:\\Dir\\File.txt') == ..frename.filescan.pathKey('c:/dir/file.txt'),
+expect( ..frename.filescan.pathKey('C:\\Dir\\File.txt') == ..frename.filescan.pathKey('c:/dir/file.txt'),
 	"A1","大小写与分隔符不同应视为同一路径",
 	..frename.filescan.pathKey('C:\\Dir\\File.txt') ++ " vs " ++ ..frename.filescan.pathKey('c:/dir/file.txt') );
 
-assert( ..frename.filescan.normalizePath('C:\\Dir\\') == 'C:\\Dir',
+expect( ..frename.filescan.normalizePath('C:\\Dir\\') == 'C:\\Dir',
 	"A2","普通目录应去掉末尾分隔符", ..frename.filescan.normalizePath('C:\\Dir\\') );
 
-assert( ..frename.filescan.normalizePath('C:\\') == 'C:\\',
+expect( ..frename.filescan.normalizePath('C:\\') == 'C:\\',
 	"A3","根目录应保留末尾分隔符", ..frename.filescan.normalizePath('C:\\') );
 
-assert( ..frename.filescan.pathKey("") == "", "A4","空路径的比较键应为空" );
+expect( ..frename.filescan.pathKey("") == "", "A4","空路径的比较键应为空" );
 
 //================ 二、去重（同一完整路径只保留一次）=================
 
@@ -70,7 +70,7 @@ var dedupeKeys = {};
 ..frename.filescan.addUniquePath(dedupeList,dedupeKeys,'C:\\t\\a.txt');
 var dup2 = ..frename.filescan.addUniquePath(dedupeList,dedupeKeys,'C:\\T\\A.txt');//仅大小写不同
 
-assert( #dedupeList == 1 && dup2 == false, "B1","仅大小写不同的同一路径应被去重", "实际条数=" ++ #dedupeList );
+expect( #dedupeList == 1 && dup2 == false, "B1","仅大小写不同的同一路径应被去重", "实际条数=" ++ #dedupeList );
 
 //================ 三、目标文件名合法性 =================
 
@@ -90,10 +90,10 @@ for(i=1;#nameCases;1){
 	var got = ..frename.precheck.invalidNameReason(c.name);
 
 	if(c.want){
-		assert( type(got) == "string", c.id, c.desc, "期望给出原因，实际=" ++ tostring(got) );
+		expect( type(got) == "string", c.id, c.desc, "期望给出原因，实际=" ++ tostring(got) );
 	}
 	else {
-		assert( got === null, c.id, c.desc, "期望合法，实际=" ++ tostring(got) );
+		expect( got === null, c.id, c.desc, "期望合法，实际=" ++ tostring(got) );
 	}
 }
 
@@ -174,15 +174,15 @@ for(i=1;#precheckCases;1){
 	for(j=1;#items;1){
 		var it = items[j];
 
-		assert( it.status == c.wantStatus[j], c.id, c.desc ++ "（第 " ++ j ++ " 项状态）",
+		expect( it.status == c.wantStatus[j], c.id, c.desc ++ "（第 " ++ j ++ " 项状态）",
 			"期望=" ++ c.wantStatus[j] ++ " 实际=" ++ tostring(it.status)
 			++ " 原因=" ++ ..frename.precheck.reasonText(it) );
 
-		assert( it.occupancy == c.wantOcc[j], c.id, c.desc ++ "（第 " ++ j ++ " 项占用分类）",
+		expect( it.occupancy == c.wantOcc[j], c.id, c.desc ++ "（第 " ++ j ++ " 项占用分类）",
 			"期望=" ++ c.wantOcc[j] ++ " 实际=" ++ tostring(it.occupancy) );
 
 		//预检之后源文件仍可能被其它程序改动，必须标记为「执行前需重新检查」
-		assert( it.needRecheck == true, c.id, "应标记执行前需重新检查（第 " ++ j ++ " 项）" );
+		expect( it.needRecheck == true, c.id, "应标记执行前需重新检查（第 " ++ j ++ " 项）" );
 	}
 }
 
@@ -196,11 +196,11 @@ var statItems = ..frename.precheck.check({
 
 var st = ..frename.precheck.statistics(statItems);
 
-assert( st.total == 3, "E1","统计总数应为 3", "实际=" ++ st.total );
-assert( st.unchanged == 1, "E2","统计未变化应为 1", "实际=" ++ st.unchanged );
-assert( st.ok == 1, "E3","统计可执行应为 1", "实际=" ++ st.ok );
-assert( st.error == 1, "E4","统计错误应为 1", "实际=" ++ st.error );
-assert( st.risky == 1, "E5","统计风险数应为 1", "实际=" ++ st.risky );
+expect( st.total == 3, "E1","统计总数应为 3", "实际=" ++ st.total );
+expect( st.unchanged == 1, "E2","统计未变化应为 1", "实际=" ++ st.unchanged );
+expect( st.ok == 1, "E3","统计可执行应为 1", "实际=" ++ st.ok );
+expect( st.error == 1, "E4","统计错误应为 1", "实际=" ++ st.error );
+expect( st.risky == 1, "E5","统计风险数应为 1", "实际=" ++ st.risky );
 
 console.log("---------------------------------------------------------");
 console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
