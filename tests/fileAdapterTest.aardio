@@ -1,0 +1,189 @@
+// frename.fileadapter —— Windows 文件系统适配层测试
+//
+// 运行方式：在 aardio IDE 中打开本文件，按 F5（运行）。
+//
+// 安全说明：
+//   - 所有磁盘操作都限制在「系统临时目录下的一个唯一子目录」里，
+//     由 io.tmpname 生成目录名，绝不触碰用户目录（文档、桌面等）。
+//   - 测试结束时会把这个目录连同里面的文件一起删掉。
+//   - 如果连测试目录都创建失败，就跳过全部磁盘用例，只测接口结构，
+//     避免在情况不明时乱动文件。
+//   - 覆盖：接口结构 / 错误返回（明确原因）/ 路径不存在情况 /
+//     以及用适配层驱动 executor 完成一次真实改名再撤销。
+
+import console;
+import frename.filescan;
+import frename.renameplan;
+import frename.executor;
+import frename.fileadapter;
+import fsys.remove;
+
+//true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
+console.open(true);
+
+var passed = 0;
+var failed = 0;
+
+var expect = function(ok,id,desc,detail){
+	if(ok){
+		passed = passed + 1;
+	}
+	else {
+		failed = failed + 1;
+		console.log("✗ " ++ id ++ " " ++ desc ++ (detail ? ("：" ++ detail) : ""));
+	}
+}
+
+console.log("=========================================================");
+console.log("frename.fileadapter —— Windows 文件系统适配层测试");
+console.log("=========================================================");
+
+//================ 一、接口结构 =================
+
+var fs = frename.fileadapter.createWindowsFs();
+
+expect( type(fs) == "table", "F1a","createWindowsFs 应返回表" );
+expect( type(fs.existsFunc) == "function", "F1b","应提供 existsFunc" );
+expect( type(fs.moveFunc) == "function", "F1c","应提供 moveFunc" );
+expect( type(fs.deleteFunc) == "function", "F1d","应提供 deleteFunc" );
+expect( type(fs.lastError) == "string", "F1e","应提供 lastError 字段" );
+
+//================ 二、独立测试目录 =================
+
+//系统临时目录下的唯一子目录，不碰用户目录
+var testDir = io.createDir(io.tmpname("frename-adapter-"));
+var canDisk = (type(testDir) == "string" && #testDir && io.exist(testDir));
+
+expect( canDisk, "F2a","应能创建独立的测试目录", "testDir=" ++ tostring(testDir) );
+
+if(!canDisk){
+	console.log("---------------------------------------------------------");
+	console.log("未能创建测试目录，跳过磁盘相关用例。");
+	console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
+	console.log("---------------------------------------------------------");
+	console.pause();
+	return;
+}
+
+var p1 = io.joinpath(testDir,"f1.txt");
+var saved1 = string.save(p1,"hello");
+expect( saved1, "F2b","应能创建测试文件" );
+
+//================ 三、existsFunc =================
+
+expect( fs.existsFunc(p1), "F3a","已创建的文件应判断为存在" );
+
+var noSuch = io.joinpath(testDir,"no-such.txt");
+expect( !fs.existsFunc(noSuch), "F3b","不存在的文件应判断为不存在" );
+expect( !fs.existsFunc(""), "F3c","空路径应返回 false" );
+expect( !fs.existsFunc(null), "F3d","null 路径应返回 false" );
+
+//================ 四、moveFunc 成功 =================
+
+var p2 = io.joinpath(testDir,"f2.txt");
+var ok4 = fs.moveFunc(p1,p2);
+
+expect( ok4, "F4a","同目录改名应成功", "lastError=" ++ fs.lastError );
+expect( !io.exist(p1), "F4b","改名后源文件应不存在" );
+expect( io.exist(p2), "F4c","改名后目标文件应存在" );
+expect( fs.existsFunc(p2), "F4d","existsFunc 应能识别新文件" );
+expect( #fs.lastError == 0, "F4e","成功之后 lastError 应被清空" );
+
+//================ 五、moveFunc 失败：源不存在 =================
+
+var dst5 = io.joinpath(testDir,"dst5.txt");
+var ok5,err5 = fs.moveFunc(noSuch,dst5);
+
+expect( !ok5, "F5a","源不存在时移动应失败" );
+expect( #tostring(err5) > 0, "F5b","应返回失败原因文本" );
+var hasSrcReason = ..string.indexOf(tostring(err5),"不存在");
+expect( hasSrcReason, "F5c","原因应说明源文件不存在", "实际=" ++ tostring(err5) );
+expect( #fs.lastError > 0, "F5d","lastError 应记录原因" );
+expect( !io.exist(dst5), "F5e","失败后不应产生目标文件" );
+
+//================ 六、moveFunc 失败：目标已存在 =================
+
+var p3 = io.joinpath(testDir,"f3.txt");
+string.save(p3,"x");
+
+var ok6,err6 = fs.moveFunc(p2,p3);
+
+expect( !ok6, "F6a","目标已存在时移动应失败（不覆盖）" );
+var hasDstReason = ..string.indexOf(tostring(err6),"已存在");
+expect( hasDstReason, "F6b","原因应说明目标已存在", "实际=" ++ tostring(err6) );
+expect( io.exist(p2), "F6c","失败后源文件应保持原样" );
+
+//================ 七、deleteFunc 成功 =================
+
+var ok7 = fs.deleteFunc(p3);
+
+expect( ok7, "F7a","删除已存在的文件应成功", "lastError=" ++ fs.lastError );
+expect( !io.exist(p3), "F7b","删除后文件应不存在" );
+expect( !fs.existsFunc(p3), "F7c","existsFunc 应识别为已删除" );
+
+//================ 八、deleteFunc 失败：文件不存在 =================
+
+var ghost = io.joinpath(testDir,"ghost.txt");
+var ok8,err8 = fs.deleteFunc(ghost);
+
+expect( !ok8, "F8a","删除不存在的文件应失败" );
+var hasDelReason = ..string.indexOf(tostring(err8),"不存在");
+expect( hasDelReason, "F8b","原因应说明文件不存在", "实际=" ++ tostring(err8) );
+
+//================ 九、路径不存在时的综合表现 =================
+
+var ghost2 = io.joinpath(testDir,"ghost2.txt");
+
+expect( !fs.existsFunc(ghost2), "F9a","不存在路径 existsFunc 应返回 false" );
+
+var ok9a,err9a = fs.moveFunc(ghost2,io.joinpath(testDir,"x1.txt"));
+expect( !ok9a, "F9b","不存在路径 moveFunc 应失败" );
+expect( #tostring(err9a) > 0, "F9c","moveFunc 应给出原因" );
+
+var ok9b,err9b = fs.deleteFunc(ghost2);
+expect( !ok9b, "F9d","不存在路径 deleteFunc 应失败" );
+expect( #tostring(err9b) > 0, "F9e","deleteFunc 应给出原因" );
+
+//================ 十、用适配层驱动 executor（真实改名 + 撤销）=================
+
+var fs10 = frename.fileadapter.createWindowsFs();
+
+var s1 = io.joinpath(testDir,"r1.txt");
+var s2 = io.joinpath(testDir,"r2.txt");
+string.save(s1,"");
+string.save(s2,"");
+
+var t1 = io.joinpath(testDir,"n1.txt");
+var t2 = io.joinpath(testDir,"n2.txt");
+
+var items = {
+	{sourcePath=s1; targetPath=t1; targetName="n1.txt"; changed=true};
+	{sourcePath=s2; targetPath=t2; targetName="n2.txt"; changed=true}
+};
+
+var plan = frename.renameplan.build(items, fs10.existsFunc);
+var res = frename.executor.executePlan(plan, fs10);
+
+expect( res.success, "F10a","适配层驱动 executor 应执行成功", res.message );
+expect( io.exist(t1) && io.exist(t2), "F10b","目标文件应真实存在" );
+expect( !io.exist(s1) && !io.exist(s2), "F10c","源文件应已移走" );
+
+var rb = frename.executor.rollback(res.executed, fs10);
+
+expect( rb.ok, "F10d","用适配层撤销应成功" );
+expect( io.exist(s1) && io.exist(s2), "F10e","撤销后源文件应恢复" );
+expect( !io.exist(t1) && !io.exist(t2), "F10f","撤销后目标文件应消失" );
+
+//================ 十一、清理测试目录 =================
+
+//连带删除目录里的所有文件和子目录
+var removed = fsys.remove(testDir);
+
+expect( removed, "F11a","应能清理测试目录" );
+expect( !io.exist(testDir), "F11b","测试目录应已被删除" );
+
+console.log("---------------------------------------------------------");
+console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
+console.log("---------------------------------------------------------");
+
+console.pause();

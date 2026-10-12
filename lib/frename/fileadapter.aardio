@@ -1,0 +1,127 @@
+// frename.fileadapter —— Windows 文件系统适配层
+//
+// 职责：把 executor 需要的 existsFunc / moveFunc / deleteFunc 三个注入函数
+// 对齐到真实的 Windows 文件系统，供 executor.executePlan(plan, ctx) 使用。
+//
+// 设计约束：
+//   1. 真实文件 API 只出现在本模块里。executor 不直接调用任何文件 API，
+//      它只认注入进来的这三个函数。
+//   2. 所有函数都捕获异常，失败时给出明确原因：
+//         - 原因会写进 fs.lastError，方便界面读取展示
+//         - 原因同时作为第二个返回值返回（executor 只取第一个返回值，不会出错）
+//   3. 不吞异常：异常对象会被 tostring 后并入原因文本。
+//   4. 不做任何「自动修复」：目标已存在就明确失败，不覆盖。
+//
+// 注意：本模块是唯一会真正改动磁盘的模块。
+// 它只提供「移动 / 删除」能力，不提供创建、复制、写入能力，
+// 也没有任何「批量执行重命名」的入口——要不要真的动手由调用方决定。
+
+namespace frename.fileadapter{
+
+	//创建 Windows 文件系统的执行上下文
+	//
+	//返回表：
+	//   existsFunc(path)            路径是否存在，返回 true / false
+	//   moveFunc(from,to)           移动或改名，成功返回 true；失败返回 false,原因
+	//   deleteFunc(path)            删除文件，成功返回 true；失败返回 false,原因
+	//   lastError                   最近一次失败的原因文本（无失败时为空串）
+	//
+	// 返回值约定与 executor 的调用方式兼容：executor 只判断第一个返回值的真假，
+	// 多返回一个原因文本不会影响它。
+	createWindowsFs = function(){
+		var fs = { lastError = "" };
+
+		//记录失败原因：写进 lastError，并作为第二个返回值返回
+		var fail = function(msg){
+			fs.lastError = msg;
+			return false,msg;
+		}
+
+		//判断路径是否存在
+		fs.existsFunc = function(path){
+			if(type(path) != "string" || !#path){
+				fs.lastError = "路径为空或不是字符串";
+				return false;
+			}
+
+			var result;
+			try{
+				result = ..io.exist(path) ? true : false;
+			}
+			catch(e){
+				fs.lastError = "判断路径是否存在时出错：" ++ tostring(e);
+				return false;
+			}
+
+			fs.lastError = "";
+			return result;
+		}
+
+		//移动 / 改名
+		fs.moveFunc = function(from,to){
+			if(type(from) != "string" || !#from) return fail("源路径为空或不是字符串");
+			if(type(to) != "string" || !#to) return fail("目标路径为空或不是字符串");
+
+			//前置检查：让失败原因更具体（executor 自己也会查，但这里能说清是哪一种）
+			var srcOk;
+			try{
+				srcOk = ..io.exist(from) ? true : false;
+			}
+			catch(e){
+				return fail("检查源路径时出错：" ++ tostring(e));
+			}
+			if(!srcOk) return fail("源文件不存在：" ++ from);
+
+			var dstOk;
+			try{
+				dstOk = ..io.exist(to) ? true : false;
+			}
+			catch(e){
+				return fail("检查目标路径时出错：" ++ tostring(e));
+			}
+			if(dstOk) return fail("目标路径已存在，不覆盖：" ++ to);
+
+			var ok;
+			try{
+				ok = ..io.move(from,to);
+			}
+			catch(e){
+				return fail("移动文件时出错：" ++ tostring(e));
+			}
+
+			if(!ok) return fail("移动文件失败（可能没有权限或文件被其它程序占用）：" ++ from ++ " → " ++ to);
+
+			fs.lastError = "";
+			return true;
+		}
+
+		//删除文件
+		fs.deleteFunc = function(path){
+			if(type(path) != "string" || !#path) return fail("路径为空或不是字符串");
+
+			var existOk;
+			try{
+				existOk = ..io.exist(path) ? true : false;
+			}
+			catch(e){
+				return fail("检查路径时出错：" ++ tostring(e));
+			}
+			if(!existOk) return fail("要删除的文件不存在：" ++ path);
+
+			var ok;
+			try{
+				ok = ..io.remove(path);
+			}
+			catch(e){
+				return fail("删除文件时出错：" ++ tostring(e));
+			}
+
+			if(!ok) return fail("删除文件失败（可能没有权限或文件被其它程序占用）：" ++ path);
+
+			fs.lastError = "";
+			return true;
+		}
+
+		return fs;
+	}
+}
