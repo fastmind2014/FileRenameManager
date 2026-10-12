@@ -1,0 +1,263 @@
+// frename.executor —— 重命名执行器测试（纯内存，不触碰真实磁盘）
+//
+// 运行方式：在 aardio IDE 中打开本文件，按 F5（运行）。
+//
+// 本测试完全不接触真实磁盘：文件系统由 makeFs 在内存中模拟，
+// moveFunc / existsFunc / deleteFunc 全部是内存里的假实现。
+// 因此不会读取、创建、修改、移动、删除或重命名任何真实文件。
+//
+// 覆盖场景：
+//   正常批量改名 / A→B B→C / A→B B→A（交换）
+//   中途（阶段2）失败自动恢复 / 临时（阶段1）失败自动恢复
+//   undo 正确性 / 撤销时清理残留 / 未注入 moveFunc 时不动作
+
+import console;
+import frename.filescan;
+import frename.renameplan;
+import frename.executor;
+
+//true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
+console.open(true);
+
+var passed = 0;
+var failed = 0;
+
+var expect = function(ok,id,desc,detail){
+	if(ok){
+		passed = passed + 1;
+	}
+	else {
+		failed = failed + 1;
+		console.log("✗ " ++ id ++ " " ++ desc ++ (detail ? ("：" ++ detail) : ""));
+	}
+}
+
+//造一个内存中的假文件系统
+//initial     初始存在的路径数组
+//failMoveFrom 可选：从该路径移出时返回 false，用来模拟某一步失败
+//failOnce     可选：为真时上面的失败只发生一次（模拟瞬时故障，之后重试可成功）
+var makeFs = function(initial,failMoveFrom,failOnce){
+	var files = {};
+
+	if(type(initial) == "table"){
+		for(i=1;#initial;1){
+			files[[ ..frename.filescan.pathKey(initial[i]) ]] = initial[i];
+		}
+	}
+
+	var fs = {
+		files = files;
+		moveCount = 0;
+		deleteCount = 0;
+		moveFailFrom = failMoveFrom;
+		failOnce = failOnce;
+	};
+
+	fs.existsFunc = function(p){
+		return files[[ ..frename.filescan.pathKey(p) ]] ? true : false;
+	}
+
+	fs.moveFunc = function(from,to){
+		var k1 = ..frename.filescan.pathKey(from);
+		var k2 = ..frename.filescan.pathKey(to);
+
+		//注入的失败点；failOnce 为真时只失败一次，之后恢复
+		if(fs.moveFailFrom && k1 == fs.moveFailFrom){
+			if(fs.failOnce) fs.moveFailFrom = null;
+			return false;
+		}
+
+		if(!files[k1]) return false;		//来源不存在
+		if(files[k2]) return false;		//目标已被占用
+
+		var p = files[k1];
+		files[k1] = null;
+		files[k2] = p;
+		fs.moveCount = fs.moveCount + 1;
+		return true;
+	}
+
+	fs.deleteFunc = function(p){
+		var k = ..frename.filescan.pathKey(p);
+		if(!files[k]) return false;
+		files[k] = null;
+		fs.deleteCount = fs.deleteCount + 1;
+		return true;
+	}
+
+	fs.has = function(p){
+		return files[[ ..frename.filescan.pathKey(p) ]] ? true : false;
+	}
+
+	return fs;
+}
+
+console.log("=========================================================");
+console.log("frename.executor —— 重命名执行器测试（纯内存）");
+console.log("=========================================================");
+
+//================ 一、正常批量改名 =================
+
+var fs1 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' });
+var items1 = {
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\y.txt'; targetName="y.txt"; changed=true};
+	{sourcePath='C:\\t\\c.txt'; targetPath='C:\\t\\z.txt'; targetName="z.txt"; changed=true}
+};
+var plan1 = frename.renameplan.build(items1, fs1.existsFunc);
+var res1 = frename.executor.executePlan(plan1, fs1);
+
+expect( #plan1.steps == 6, "E1a","三个文件应生成 6 个步骤（两阶段）", "实际=" ++ #plan1.steps );
+expect( res1.success, "E1b","正常批量改名应全部成功", res1.message );
+expect( #res1.executed == 6, "E1c","应成功执行 6 步", "实际=" ++ #res1.executed );
+expect( !res1.rolledBack, "E1d","成功时不应触发回滚" );
+expect( fs1.has('C:\\t\\x.txt') && fs1.has('C:\\t\\y.txt') && fs1.has('C:\\t\\z.txt'),
+	"E1e","三个目标文件都应存在" );
+expect( !fs1.has('C:\\t\\a.txt') && !fs1.has('C:\\t\\b.txt') && !fs1.has('C:\\t\\c.txt'),
+	"E1f","三个源文件都应已移走" );
+
+//================ 二、A→B、B→C（链式）=================
+
+var fs2 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' });
+var plan2 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=true}
+}, fs2.existsFunc);
+var res2 = frename.executor.executePlan(plan2, fs2);
+
+expect( res2.success, "E2a","链式 A→B、B→C 应执行成功", res2.message );
+expect( fs2.has('C:\\t\\b.txt') && fs2.has('C:\\t\\c.txt') && !fs2.has('C:\\t\\a.txt'),
+	"E2b","链式执行后应存在 b.txt 与 c.txt，不再有 a.txt" );
+
+//================ 三、A→B、B→A（交换）=================
+
+var fs3 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' });
+var plan3 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\a.txt'; targetName="a.txt"; changed=true}
+}, fs3.existsFunc);
+var res3 = frename.executor.executePlan(plan3, fs3);
+
+expect( res3.success, "E3a","交换 A→B、B→A 应执行成功", res3.message );
+expect( fs3.has('C:\\t\\a.txt') && fs3.has('C:\\t\\b.txt'),
+	"E3b","交换执行后两个文件都应存在" );
+
+//================ 四、中途（阶段2）失败自动恢复 =================
+
+var fs4 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' });
+var plan4 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=true}
+}, fs4.existsFunc);
+
+//让阶段 2 的第一步失败（steps[3] 是阶段 2 的第一个步骤，其来源是临时名）
+//failOnce 表示这是瞬时故障：只有那一次搬不动，撤销重试时可以成功
+fs4.moveFailFrom = ..frename.filescan.pathKey(plan4.steps[3].from);
+fs4.failOnce = true;
+
+var res4 = frename.executor.executePlan(plan4, fs4);
+
+expect( !res4.success, "E4a","阶段 2 失败应报告执行失败", res4.message );
+expect( res4.rolledBack, "E4b","失败后应自动回滚" );
+expect( res4.rollbackOk, "E4c","自动回滚应完全成功", res4.message );
+expect( #res4.rollbackFailed == 0, "E4d","自动回滚不应有失败步骤",
+	"实际=" ++ #res4.rollbackFailed );
+expect( fs4.has('C:\\t\\a.txt') && fs4.has('C:\\t\\b.txt') && !fs4.has('C:\\t\\c.txt'),
+	"E4e","回滚后应恢复到执行前状态" );
+
+//================ 五、临时（阶段1）失败自动恢复 =================
+
+var fs5 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' });
+var plan5 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=true}
+}, fs5.existsFunc);
+
+//让阶段 1 的第二步失败（steps[2].from 就是 b.txt）
+fs5.moveFailFrom = ..frename.filescan.pathKey(plan5.steps[2].from);
+
+var res5 = frename.executor.executePlan(plan5, fs5);
+
+expect( !res5.success, "E5a","阶段 1 失败应报告执行失败", res5.message );
+expect( res5.rolledBack, "E5b","失败后应自动回滚" );
+expect( res5.rollbackOk, "E5c","自动回滚应完全成功", res5.message );
+expect( fs5.has('C:\\t\\a.txt') && fs5.has('C:\\t\\b.txt') && !fs5.has('C:\\t\\c.txt'),
+	"E5d","回滚后应恢复到执行前状态" );
+
+//================ 六、undo 正确性 =================
+
+var fs6 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' });
+var plan6 = frename.renameplan.build(items1, fs6.existsFunc);
+var res6 = frename.executor.executePlan(plan6, fs6);
+
+expect( res6.success, "E6a","undo 用例的前置执行应成功", res6.message );
+expect( frename.executor.canUndo(res6.executed), "E6b","执行过步骤后应可以 undo" );
+
+var rb6 = frename.executor.rollback(res6.executed, fs6);
+
+expect( rb6.ok, "E6c","undo 应全部成功" );
+expect( rb6.doneCount == 6, "E6d","应撤销 6 步", "实际=" ++ rb6.doneCount );
+expect( fs6.has('C:\\t\\a.txt') && fs6.has('C:\\t\\b.txt') && fs6.has('C:\\t\\c.txt'),
+	"E6e","undo 后三个源文件都应恢复" );
+expect( !fs6.has('C:\\t\\x.txt') && !fs6.has('C:\\t\\y.txt') && !fs6.has('C:\\t\\z.txt'),
+	"E6f","undo 后三个目标文件都应消失" );
+
+//================ 七、撤销时清理残留（覆盖 deleteFunc）=================
+
+var res7 = frename.executor.executePlan(plan6, fs6);
+expect( res7.success, "E7a","再次执行应成功", res7.message );
+
+//模拟残留：a.txt 本应已被移走，却被外部程序重新创建了
+fs6.files[[ ..frename.filescan.pathKey('C:\\t\\a.txt') ]] = 'C:\\t\\a.txt';
+
+var rb7 = frename.executor.rollback(res7.executed, fs6);
+
+expect( rb7.ok, "E7b","存在残留时 undo 仍应成功" );
+expect( fs6.deleteCount > 0, "E7c","撤销前应先删除残留文件",
+	"deleteCount=" ++ fs6.deleteCount );
+expect( fs6.has('C:\\t\\a.txt'), "E7d","撤销后 a.txt 应恢复存在" );
+
+//================ 八、未注入 moveFunc 时不动作 =================
+
+//故意只给 existsFunc，不给 moveFunc / deleteFunc
+var res8 = frename.executor.executePlan(plan6,{ existsFunc = fs6.existsFunc });
+
+expect( !res8.success, "E8a","没有注入 moveFunc 时执行应失败", res8.message );
+expect( #res8.executed == 0, "E8b","没有注入 moveFunc 时不应有任何步骤成功",
+	"实际=" ++ #res8.executed );
+expect( res8.rolledBack, "E8c","应照旧走自动回滚流程（实际什么都没做）" );
+
+//================ 九、undo 日志文本 =================
+
+var logText = frename.executor.undoLogText(res6.executed);
+expect( ..string.indexOf(logText,"→") && ..string.indexOf(logText,'C:\\t\\x.txt'),
+	"E9","undo 日志文本应包含目标路径与箭头" );
+
+//================ 十、持续失败时无法完全恢复 =================
+//真实场景：例如目标文件被其它程序长期占用，连撤销也搬不动。
+//这时必须如实报告 rollbackOk = false，并保留失败明细，不能假装恢复成功。
+
+var fs10 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' });
+var plan10 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=true}
+}, fs10.existsFunc);
+
+//持续失败：从临时名 temp1 移出永远失败（不用 failOnce）
+fs10.moveFailFrom = ..frename.filescan.pathKey(plan10.steps[3].from);
+
+var res10 = frename.executor.executePlan(plan10, fs10);
+
+expect( !res10.success, "E10a","持续失败应报告执行失败", res10.message );
+expect( res10.rolledBack, "E10b","仍然应该尝试自动回滚" );
+expect( !res10.rollbackOk, "E10c","持续失败时应如实报告回滚未完全成功" );
+expect( #res10.rollbackFailed == 1, "E10d","应记录 1 步回滚失败",
+	"实际=" ++ #res10.rollbackFailed );
+expect( ..string.indexOf(res10.message,"自动恢复未完全成功"),
+	"E10e","结果摘要应说明自动恢复未完全成功" );
+
+console.log("---------------------------------------------------------");
+console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
+console.log("---------------------------------------------------------");
+
+console.pause();

@@ -1,0 +1,194 @@
+// frename.executor —— 重命名执行器（纯逻辑，文件操作全部由注入函数模拟）
+//
+// 职责：按 renameplan 生成的两阶段计划逐步执行，
+// 任一步失败就自动回滚已执行的步骤；也可以按 undo 日志主动撤销。
+//
+// 严格限制：本模块不直接调用任何文件系统 API。
+// 所有文件操作都通过调用方注入的 moveFunc / existsFunc / deleteFunc 完成：
+//   existsFunc(path)            该路径当前是否存在
+//   moveFunc(from,to)           移动/改名，成功返回 true
+//   deleteFunc(path)            删除，成功返回 true（仅撤销时清理残留用）
+// 测试里可以全部用内存中的假实现；界面上也可以先接模拟实现再接真实实现。
+// 本模块不创建、修改、移动、删除或重命名任何真实文件。
+//
+// 安全设计：如果调用方没有注入 moveFunc / deleteFunc，它们默认返回 false，
+// 也就是「什么都不做、执行必然失败」，避免忘记注入时误操作真实文件系统。
+
+import frename.filescan;
+
+namespace frename.executor{
+
+	//补齐上下文中缺失的函数。
+	//缺省的 existsFunc 用 io.exist 做只读判断；
+	//缺省的 moveFunc / deleteFunc 一律返回 false —— 没有执行能力就不动手。
+	normCtx = function(ctx){
+		var c = {};
+		if(type(ctx) == "table") c = ..table.assign({},ctx);
+
+		if(type(c.existsFunc) != "function"){
+			c.existsFunc = function(p){
+				return ..io.exist(p) ? true : false;
+			}
+		}
+		if(type(c.moveFunc) != "function"){
+			c.moveFunc = function(from,to){
+				return false;
+			}
+		}
+		if(type(c.deleteFunc) != "function"){
+			c.deleteFunc = function(p){
+				return false;
+			}
+		}
+
+		return c;
+	}
+
+	//按计划执行重命名（两阶段：先全部进临时名，再全部进最终名）
+	//
+	//plan    renameplan.build 的返回值
+	//ctx   { existsFunc; moveFunc; deleteFunc }
+	//
+	//返回 executionResult：
+	//   success        是否全部步骤都成功
+	//   executed       成功执行的步骤数组，同时就是 undo 日志
+	//   failedStep     失败的步骤与原因，没有失败为 null
+	//   rolledBack     失败后是否执行了自动回滚
+	//   rollbackOk     自动回滚是否完全成功
+	//   rollbackFailed 自动回滚中失败的步骤
+	//   message        人读的结果摘要
+	//注意：不能用 execute 这个名字 —— 它是 aardio 的内置函数（execute("pause") 之类），
+	//在命名空间里赋值会报 "Can't modify the constant : 'execute'"。
+	executePlan = function(plan,ctx){
+		var c = ..frename.executor.normCtx(ctx);
+
+		var result = {
+			success = false;
+			executed = {};
+			failedStep = null;
+			rolledBack = false;
+			rollbackOk = true;
+			rollbackFailed = {};
+			message = "";
+		};
+
+		if(type(plan) != "table" || type(plan.steps) != "table"){
+			result.message = "计划为空或没有可执行步骤";
+			return result;
+		}
+
+		for(i=1;#plan.steps;1){
+			var s = plan.steps[i];
+			if(type(s) != "table") continue;
+
+			//前置检查：来源必须存在，目标必须没有被占用
+			if(!c.existsFunc(s.from)){
+				result.failedStep = { step=s; reason="来源文件不存在：" ++ s.from };
+				break;
+			}
+			if(c.existsFunc(s.to)){
+				result.failedStep = { step=s; reason="目标路径已被占用：" ++ s.to };
+				break;
+			}
+			if(!c.moveFunc(s.from,s.to)){
+				result.failedStep = { step=s; reason="移动失败：" ++ s.from ++ " → " ++ s.to };
+				break;
+			}
+
+			..table.push(result.executed,s);
+		}
+
+		//全部走完：成功
+		if(!result.failedStep){
+			result.success = true;
+			result.message = "执行成功，共 " ++ #result.executed ++ " 步";
+			return result;
+		}
+
+		//中途失败：自动回滚已执行的步骤，尽量回到执行前的状态
+		result.message = "执行失败（阶段 " ++ tostring(result.failedStep.step.phase) ++ "）："
+			++ result.failedStep.reason;
+
+		var rb = ..frename.executor.rollback(result.executed,c);
+
+		result.rolledBack = true;
+		result.rollbackOk = rb.ok;
+		result.rollbackFailed = rb.failed;
+
+		if(rb.ok){
+			result.message = result.message ++ "；已自动恢复到执行前状态";
+		}
+		else {
+			result.message = result.message ++ "；自动恢复未完全成功，失败 " ++ #rb.failed ++ " 步";
+		}
+
+		return result;
+	}
+
+	//按 undo 日志逆序撤销
+	//
+	//executionLog  executePlan 返回的 executed 数组（也可以是其中一部分）
+	//ctx           与 executePlan 相同
+	//
+	//返回 { ok; doneCount; failed }
+	//   ok        是否每一步都撤销成功
+	//   doneCount 成功撤销的步数
+	//   failed    撤销失败的步骤与原因
+	//
+	//逆序是为了让中间状态始终一致：后执行的先撤销。
+	rollback = function(executionLog,ctx){
+		var c = ..frename.executor.normCtx(ctx);
+
+		var r = { ok=true; doneCount=0; failed={} };
+
+		if(type(executionLog) != "table"){
+			r.ok = false;
+			return r;
+		}
+
+		for(i=#executionLog;i>=1;i--){
+			var e = executionLog[i];
+			if(type(e) != "table") continue;
+
+			//要恢复成 e.from。若该路径当前竟然存在（残留或外部新建的文件），
+			//先删除它，否则移动会失败；删除失败就记录并跳过这一步。
+			if(c.existsFunc(e.from)){
+				if(!c.deleteFunc(e.from)){
+					..table.push(r.failed,{ step=e; reason="撤销时无法删除已存在的路径：" ++ e.from });
+					continue;
+				}
+			}
+
+			if(!c.moveFunc(e.to,e.from)){
+				..table.push(r.failed,{ step=e; reason="撤销移动失败：" ++ e.to ++ " → " ++ e.from });
+				continue;
+			}
+
+			r.doneCount = r.doneCount + 1;
+		}
+
+		if(#r.failed) r.ok = false;
+		return r;
+	}
+
+	//是否还有可撤销的步骤
+	canUndo = function(executionLog){
+		if(type(executionLog) != "table") return false;
+		return (#executionLog > 0);
+	}
+
+	//把 undo 日志格式化成一行行文本
+	undoLogText = function(executionLog){
+		if(type(executionLog) != "table") return "";
+
+		var s = "";
+		for(i=1;#executionLog;1){
+			var e = executionLog[i];
+			if(type(e) != "table") continue;
+			if(#s) s = s ++ '\r\n';
+			s = s ++ "阶段" ++ tostring(e.phase) ++ "：" ++ tostring(e.from)
+				++ "  →  " ++ tostring(e.to);
+		}
+		return s;
+	}
+}
