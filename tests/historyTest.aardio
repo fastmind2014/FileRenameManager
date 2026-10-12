@@ -1,0 +1,244 @@
+// frename.history —— 操作历史测试（纯内存，不触碰真实磁盘）
+//
+// 运行方式：在 aardio IDE 中打开本文件，按 F5（运行）。
+//
+// 本测试完全不接触真实磁盘：
+//   executionResult 由 executor + 内存中的 makeFs 真实产生（不是手搓的表），
+//   文件系统由 makeFs 在内存中模拟。
+// 因此不会读取、创建、修改、移动、删除或重命名任何真实文件。
+//
+// 覆盖场景：
+//   成功执行记录 / 执行失败记录 / 回滚失败记录
+//   获取最近一次可撤销操作 / 撤销后不可重复撤销 / 多次操作历史排序
+
+import console;
+import frename.filescan;
+import frename.renameplan;
+import frename.executor;
+import frename.history;
+
+//true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
+console.open(true);
+
+var passed = 0;
+var failed = 0;
+
+var expect = function(ok,id,desc,detail){
+	if(ok){
+		passed = passed + 1;
+	}
+	else {
+		failed = failed + 1;
+		console.log("✗ " ++ id ++ " " ++ desc ++ (detail ? ("：" ++ detail) : ""));
+	}
+}
+
+//内存中的假文件系统（与 executorTest 同一套）
+//failOnce 为真时，注入的失败只发生一次（模拟瞬时故障，之后重试可成功）
+var makeFs = function(initial,failMoveFrom,failOnce){
+	var files = {};
+
+	if(type(initial) == "table"){
+		for(i=1;#initial;1){
+			files[[ ..frename.filescan.pathKey(initial[i]) ]] = initial[i];
+		}
+	}
+
+	var fs = {
+		files = files;
+		moveCount = 0;
+		deleteCount = 0;
+		moveFailFrom = failMoveFrom;
+		failOnce = failOnce;
+	};
+
+	fs.existsFunc = function(p){
+		return files[[ ..frename.filescan.pathKey(p) ]] ? true : false;
+	}
+
+	fs.moveFunc = function(from,to){
+		var k1 = ..frename.filescan.pathKey(from);
+		var k2 = ..frename.filescan.pathKey(to);
+
+		//注入的失败点；failOnce 为真时只失败一次，之后恢复
+		if(fs.moveFailFrom && k1 == fs.moveFailFrom){
+			if(fs.failOnce) fs.moveFailFrom = null;
+			return false;
+		}
+
+		if(!files[k1]) return false;
+		if(files[k2]) return false;
+
+		var p = files[k1];
+		files[k1] = null;
+		files[k2] = p;
+		fs.moveCount = fs.moveCount + 1;
+		return true;
+	}
+
+	fs.deleteFunc = function(p){
+		var k = ..frename.filescan.pathKey(p);
+		if(!files[k]) return false;
+		files[k] = null;
+		fs.deleteCount = fs.deleteCount + 1;
+		return true;
+	}
+
+	fs.has = function(p){
+		return files[[ ..frename.filescan.pathKey(p) ]] ? true : false;
+	}
+
+	return fs;
+}
+
+//三个文件的普通改名（目标互不相同）
+var items3 = {
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\y.txt'; targetName="y.txt"; changed=true};
+	{sourcePath='C:\\t\\c.txt'; targetPath='C:\\t\\z.txt'; targetName="z.txt"; changed=true}
+};
+
+//链式改名 A→B、B→C
+var itemsChain = {
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=true}
+};
+
+console.log("=========================================================");
+console.log("frename.history —— 操作历史测试（纯内存）");
+console.log("=========================================================");
+
+//================ 一、成功执行记录 =================
+
+var fs1 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' });
+var plan1 = frename.renameplan.build(items3, fs1.existsFunc);
+var res1 = frename.executor.executePlan(plan1, fs1);
+
+var h = frename.history.create();
+var s1 = h.addSession(res1,"第一次执行");
+
+expect( s1 != null, "H1a","成功执行应能添加记录" );
+expect( s1.success, "H1b","记录应标记为成功" );
+expect( s1.undoable, "H1c","成功执行的会话应可撤销" );
+expect( !s1.undone, "H1d","新会话不应处于已撤销状态" );
+expect( #s1.executionLog == 6, "H1e","应保存 6 步执行日志", "实际=" ++ #s1.executionLog );
+expect( s1.note == "第一次执行", "H1f","应保存附加说明", "实际=" ++ s1.note );
+expect( s1.id == 1, "H1g","第一条会话 id 应为 1", "实际=" ++ s1.id );
+expect( h.count() == 1, "H1h","应有 1 条会话", "实际=" ++ h.count() );
+expect( !s1.rolledBack, "H1i","成功执行不应记录回滚" );
+
+//================ 二、执行失败记录（已自动回滚成功）=================
+
+var fs2 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' });
+var plan2 = frename.renameplan.build(itemsChain, fs2.existsFunc);
+//阶段 2 第一步瞬时失败：执行会失败，但自动回滚能成功
+fs2.moveFailFrom = ..frename.filescan.pathKey(plan2.steps[3].from);
+fs2.failOnce = true;
+var res2 = frename.executor.executePlan(plan2, fs2);
+
+var s2 = h.addSession(res2);
+
+expect( !s2.success, "H2a","执行失败应被记录为未成功" );
+expect( s2.rolledBack, "H2b","应记录执行过自动回滚" );
+expect( s2.rollbackOk, "H2c","应记录自动回滚成功" );
+expect( !s2.undoable, "H2d","已自动回滚成功的会话不应再可撤销" );
+expect( s2.failedStep != null, "H2e","应保存失败步骤" );
+var foundMsg = ..string.indexOf(s2.message,"执行失败");
+expect( foundMsg, "H2f","应保存结果摘要", "实际=" ++ s2.message );
+
+//================ 三、回滚失败记录 =================
+
+var fs3 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' });
+var plan3 = frename.renameplan.build(itemsChain, fs3.existsFunc);
+//持续失败：连撤销也搬不动
+fs3.moveFailFrom = ..frename.filescan.pathKey(plan3.steps[3].from);
+var res3 = frename.executor.executePlan(plan3, fs3);
+
+var s3 = h.addSession(res3,"需要补救的一次");
+
+expect( !s3.success, "H3a","应记录为未成功" );
+expect( s3.rolledBack, "H3b","应记录尝试过回滚" );
+expect( !s3.rollbackOk, "H3c","应记录回滚未完全成功" );
+expect( s3.undoable, "H3d","回滚未完成的会话应可撤销，便于人工补救" );
+expect( #s3.rollbackFailed == 1, "H3e","应保存回滚失败明细", "实际=" ++ #s3.rollbackFailed );
+expect( #s3.executionLog == 2, "H3f","应保存已执行的 2 步日志", "实际=" ++ #s3.executionLog );
+
+//================ 四、获取最近一次可撤销操作 =================
+
+var last = h.getLastUndoable();
+
+expect( last != null, "H4a","应能找到可撤销的会话" );
+if(last != null){
+	expect( last.id == s3.id, "H4b","应返回最近一次可撤销的会话（H3）", "实际=" ++ last.id );
+}
+else {
+	expect( false, "H4b","应返回最近一次可撤销的会话（H3）" );
+}
+
+//================ 五、撤销后不可重复撤销 =================
+
+expect( h.markUndone(s3.id), "H5a","标记撤销应成功" );
+
+var s3b = h.getSession(s3.id);
+expect( s3b != null && s3b.undone, "H5b","该会话应已标记为已撤销" );
+expect( !h.markUndone(s3.id), "H5c","重复标记同一会话应失败" );
+
+//标记之后，最近可撤销应往前找到 H1 那次成功执行
+var last2 = h.getLastUndoable();
+
+if(last2 != null){
+	expect( last2.id == s1.id, "H5d","撤销后应返回更早的可撤销会话（H1）", "实际=" ++ last2.id );
+}
+else {
+	expect( false, "H5d","撤销后应返回更早的可撤销会话（H1）" );
+}
+
+//本来就不可撤销的会话，标记也应失败
+expect( !h.markUndone(s2.id), "H5e","不可撤销的会话标记应失败" );
+//不存在的 id
+expect( !h.markUndone(999), "H5f","不存在的 id 标记应失败" );
+
+//================ 六、多次操作历史排序 =================
+
+expect( h.count() == 3, "H6a","应有 3 条会话", "实际=" ++ h.count() );
+
+var ss = h.getSessions();
+expect( #ss == 3, "H6b","getSessions 应返回全部 3 条", "实际=" ++ #ss );
+expect( ss[1].id == 1 && ss[2].id == 2 && ss[3].id == 3, "H6c","应按添加顺序排列（最早在前）" );
+expect( ss[3].id > ss[1].id, "H6d","最新会话应排在末尾" );
+
+var s2x = h.getSession(2);
+expect( s2x != null && s2x.id == 2, "H6e","按 id 应能查到会话" );
+expect( h.getSession(999) == null, "H6f","查不存在的 id 应返回 null" );
+
+//================ 七、超出上限丢弃最旧 =================
+
+var h7 = frename.history.create(2);
+h7.addSession(res1);
+h7.addSession(res2);
+h7.addSession(res3);
+
+expect( h7.count() == 2, "H7a","超出上限后应只保留 2 条", "实际=" ++ h7.count() );
+
+var ss7 = h7.getSessions();
+expect( ss7[1].id == 2, "H7b","被丢弃的应是最旧的那条", "实际=" ++ ss7[1].id );
+
+//================ 八、清空 =================
+
+var h8 = frename.history.create();
+h8.addSession(res1);
+h8.clear();
+
+expect( h8.count() == 0, "H8a","清空后应没有会话", "实际=" ++ h8.count() );
+expect( h8.getLastUndoable() == null, "H8b","清空后应没有可撤销会话" );
+
+//================ 九、非法输入 =================
+
+expect( h.addSession(null) == null, "H9a","传入 null 应返回 null" );
+expect( h.count() == 3, "H9b","非法输入不应新增会话", "实际=" ++ h.count() );
+
+console.log("---------------------------------------------------------");
+console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
+console.log("---------------------------------------------------------");
+
+console.pause();

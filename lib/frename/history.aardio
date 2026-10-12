@@ -1,0 +1,146 @@
+// frename.history —— 操作历史（纯内存）
+//
+// 职责：记录 executor.executePlan 返回的 executionResult 以及对应的 executionLog，
+// 让上层能查看「最近做过什么」，并找出最近一次还能撤销的操作。
+//
+// 严格限制：只保存在内存里。不写磁盘、不调用任何文件 API，
+// 也不创建、修改、移动、删除或重命名任何文件。
+
+namespace frename.history{
+
+	//默认最多保留多少条会话
+	DEFAULT_LIMIT = 100;
+
+	//创建历史记录器
+	//limit 可选：最多保留多少条会话，超出后丢弃最旧的
+	create = function(limit){
+	//上限：没传或传得不合理就用默认值
+	//（这里用 if 而不是跨行三元：aardio 的 ? : 不能把 ? 放到下一行）
+	var maxSessions = ..frename.history.DEFAULT_LIMIT;
+	if(type(limit) == "number" && limit > 0) maxSessions = ..math.floor(limit);
+
+		var h = {
+			sessions = {};
+			limit = maxSessions;
+			seq = 0;
+		};
+
+		//判断一次执行结果是否还能撤销
+		//   执行成功：步骤都搬完了，可以撤销（把名字改回去）
+		//   执行失败且自动回滚没做完：需要手动撤销来补救
+		//   执行失败但已自动回滚成功：不需要、也不能再撤销（再撤会重复搬动）
+		var undoableResult = function(result){
+			if(type(result) != "table") return false;
+			if(type(result.executed) != "table") return false;
+			if(!#result.executed) return false;
+
+			if(result.success) return true;
+			if(result.rolledBack && !result.rollbackOk) return true;
+
+			return false;
+		}
+
+		//添加一次执行记录
+		//result  executor.executePlan 的返回值
+		//note    可选，附加说明（例如「从界面点击执行」）
+		//
+		//返回新建的会话对象；result 不是表时返回 null
+		h.addSession = function(result,note){
+			if(type(result) != "table") return null;
+
+			h.seq = h.seq + 1;
+
+			//拷贝一份执行日志，避免调用方后续改动影响到历史记录
+			var log = {};
+			if(type(result.executed) == "table"){
+				for(i=1;#result.executed;1){
+					..table.push(log,result.executed[i]);
+				}
+			}
+
+			var s = {
+				id = h.seq;
+				createdAt = tostring(..time(),"%Y-%m-%d %H:%M:%S");
+				note = (type(note) == "string") ? note : "";
+				success = result.success ? true : false;
+				message = tostring(result.message);
+				executionLog = log;
+				failedStep = result.failedStep;
+				rolledBack = result.rolledBack ? true : false;
+				rollbackOk = result.rollbackOk ? true : false;
+				rollbackFailed = result.rollbackFailed;
+				undone = false;
+				undoable = undoableResult(result);
+			};
+
+			..table.push(h.sessions,s);
+
+			//超出上限时丢弃最旧的
+			while(#h.sessions > h.limit){
+				..table.remove(h.sessions,1);
+			}
+
+			return s;
+		}
+
+		//按添加顺序返回全部会话（最早在前，最新在后）
+		h.getSessions = function(){
+			return h.sessions;
+		}
+
+		//会话总数
+		h.count = function(){
+			return #h.sessions;
+		}
+
+		//按 id 查找会话，找不到返回 null
+		h.getSession = function(id){
+			for(i=1;#h.sessions;1){
+				var s = h.sessions[i];
+				if(type(s) != "table") continue;
+				if(s.id == id) return s;
+			}
+			return null;
+		}
+
+		//返回最近一次「还能撤销」且「尚未撤销」的会话，没有则返回 null
+		h.getLastUndoable = function(){
+			for(i=#h.sessions;i>=1;i--){
+				var s = h.sessions[i];
+				if(type(s) != "table") continue;
+				if(s.undone) continue;
+				if(!s.undoable) continue;
+				return s;
+			}
+			return null;
+		}
+
+		//把某个会话标记为已撤销。撤销成功后应调用它，避免同一批次被撤销两次。
+		//id 为会话的 id（addSession 返回对象的 id）。
+		//
+		//返回是否标记成功；以下情况返回 false：
+		//   找不到该 id、该会话本来就不可撤销、该会话已经标记过
+		h.markUndone = function(id){
+			for(i=1;#h.sessions;1){
+				var s = h.sessions[i];
+				if(type(s) != "table") continue;
+				if(s.id != id) continue;
+
+				if(!s.undoable) return false;
+				if(s.undone) return false;
+
+				s.undone = true;
+				return true;
+			}
+			return false;
+		}
+
+		//清空全部历史（连序号一起重置）
+		h.clear = function(){
+			h.sessions = {};
+			h.seq = 0;
+		}
+
+		return h;
+	}
+}
