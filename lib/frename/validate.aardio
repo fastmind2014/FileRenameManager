@@ -1,0 +1,187 @@
+// frename.validate —— 重命名计划校验（纯逻辑）
+//
+// 职责：在执行之前，对 renameplan 生成的两阶段计划做一次静态校验，
+// 把问题分成「错误（不能执行）」和「警告（可以执行但要留意）」两类。
+//
+// 设计约束：
+//   - 本模块不调用任何真实文件 API（io.exist / io.move / io.remove 一概不碰）。
+//     「目标是否已存在」由调用方注入 existsFn 提供；不注入就跳过这项检查。
+//   - io.splitpath / io.joinpath 只做路径字符串拆分与拼接，不访问磁盘。
+//   - 路径比较统一走 frename.filescan.pathKey（统一分隔符、大小写不敏感）。
+//
+// 与 precheck 的分工：
+//   precheck 面向「单个文件的预检结果展示」（有 status / occupancy 等字段）；
+//   validate 面向「整个计划能不能执行」，只回答 ok / errors / warnings。
+
+import frename.filescan;
+import frename.precheck;
+
+namespace frename.validate{
+
+	//校验重命名计划
+	//
+	//plan      renameplan.build 的返回值（也可以是自己构造的同结构表）
+	//existsFn  可选：function(path) 返回该路径当前是否存在。
+	//           不传则跳过「目标已存在」这项检查。
+	//
+	//返回表：
+	//   ok                是否没有错误（true 表示可以进入执行阶段）
+	//   errors            错误数组，每项 { index; sourcePath; targetPath; reason }
+	//   warnings          警告数组，结构同上
+	//   checkedExistence  是否真的做了「目标已存在」检查
+	check = function(plan,existsFn){
+		var errors = {};
+		var warnings = {};
+
+		var result = {
+			ok = false;
+			errors = errors;
+			warnings = warnings;
+			checkedExistence = (type(existsFn) == "function");
+		};
+
+		if(type(plan) != "table" || type(plan.operations) != "table"){
+			..table.push(errors,{
+				index = 0; sourcePath = ""; targetPath = "";
+				reason = "计划为空或没有可执行的操作";
+			});
+			return result;
+		}
+
+		var ops = plan.operations;
+
+		//先统计：源路径出现次数、目标路径出现次数、源路径键 -> 下标
+		var sourceCount = {};
+		var targetCount = {};
+		var sourceKeys = {};
+
+		for(i=1;#ops;1){
+			var op = ops[i];
+			if(type(op) != "table") continue;
+
+			var sk = ..frename.filescan.pathKey(op.sourcePath);
+			var tk = ..frename.filescan.pathKey(op.targetPath);
+
+			if(#sk){
+				sourceCount[[sk]] = (sourceCount[[sk]] : 0) + 1;
+				sourceKeys[[sk]] = i;
+			}
+			if(#tk){
+				targetCount[[tk]] = (targetCount[[tk]] : 0) + 1;
+			}
+		}
+
+		for(i=1;#ops;1){
+			var op = ops[i];
+			if(type(op) != "table") continue;
+
+			var srcText = tostring(op.sourcePath);
+			var dstText = tostring(op.targetPath);
+			var sk = ..frename.filescan.pathKey(op.sourcePath);
+			var tk = ..frename.filescan.pathKey(op.targetPath);
+
+			var item = {
+				index = op.index;
+				sourcePath = op.sourcePath;
+				targetPath = op.targetPath;
+			};
+
+			//---------- 1. 空路径 ----------
+			if(!#srcText || !#dstText || !#sk || !#tk){
+				..table.push(errors, ..table.assign(item,{
+					reason = "源路径或目标路径为空";
+				}));
+				continue;		//空路径时其它检查都无从谈起
+			}
+
+			//---------- 2. 目标文件名为空 ----------
+			var info = ..io.splitpath(op.targetPath);
+			var targetName = (type(info) == "table") ? info.file : "";
+
+			if(!#targetName){
+				..table.push(errors, ..table.assign(item,{
+					reason = "目标文件名为空";
+				}));
+			}
+			else {
+				//---------- 3. 非法 Windows 文件名 ----------
+				var badName = ..frename.precheck.invalidNameReason(targetName);
+				if(badName){
+					..table.push(errors, ..table.assign(item,{
+						reason = badName;
+					}));
+				}
+			}
+
+			//---------- 4. 源等于目标 ----------
+			//比较键相同即视为同一路径；字符串完全相同说明这项根本不该出现，
+			//仅大小写不同则是另一类问题（Windows 下可能不生效）。
+			var sameKey = (sk == tk);
+
+			if(sameKey){
+				if(srcText == dstText){
+					..table.push(errors, ..table.assign(item,{
+						reason = "源路径与目标路径完全相同，无需执行";
+					}));
+				}
+				else {
+					..table.push(warnings, ..table.assign(item,{
+						reason = "目标与源仅大小写不同，Windows 文件系统不区分大小写，可能不生效";
+					}));
+				}
+			}
+
+			//---------- 5. 源路径重复 ----------
+			if((sourceCount[[sk]] : 0) > 1){
+				..table.push(errors, ..table.assign(item,{
+					reason = "源路径在计划中重复出现";
+				}));
+			}
+
+			//---------- 6. 重复目标路径 ----------
+			if((targetCount[[tk]] : 0) > 1){
+				..table.push(errors, ..table.assign(item,{
+					reason = "多个操作生成了相同的目标路径";
+				}));
+			}
+
+			//---------- 7. 目标已存在（需要注入 existsFn）----------
+			//源与目标同一个路径时不存在「占用」问题，跳过
+			if(!sameKey && type(existsFn) == "function"){
+				var exists = false;
+
+				try{
+					exists = existsFn(op.targetPath) ? true : false;
+				}
+				catch(e){
+					//检查本身出错不当成错误，但要留下警告，避免 silently 放过
+					exists = false;
+					..table.push(warnings, ..table.assign(item,{
+						reason = "检查目标是否已存在时出错：" ++ tostring(e);
+					}));
+				}
+
+				if(exists){
+					var srcIdx = sourceKeys[[tk]];
+
+					if(srcIdx && srcIdx != i){
+						//被本批次其它源文件占用：A→B、B→C 这类链式情形，
+						//两阶段执行正是为它设计的，所以只是警告
+						..table.push(warnings, ..table.assign(item,{
+							reason = "目标被本批次其它待处理文件占用（链式重命名，两阶段执行可处理）";
+						}));
+					}
+					else {
+						//被本批次之外的文件占用：真实冲突
+						..table.push(errors, ..table.assign(item,{
+							reason = "目标路径已被本批次之外的文件占用";
+						}));
+					}
+				}
+			}
+		}
+
+		result.ok = (#errors == 0);
+		return result;
+	}
+}

@@ -4,4 +4,15 @@
 	<folder name="窗体文件" path="dlg" comment="目录" embed="true" local="false" ignored="false">
 		<file name="mainForm.aardio" path="dlg\mainForm.aardio" comment="dlg\mainForm.aardio"/>
 	</folder>
+	<folder name="tests" path="tests" comment="tests" local="false" embed="false" ignored="false">
+		<file name="executorTest.aardio" path="tests\executorTest.aardio" comment="tests\executorTest.aardio"/>
+		<file name="fileAdapterTest.aardio" path="tests\fileAdapterTest.aardio" comment="tests\fileAdapterTest.aardio"/>
+		<file name="fileScanTest.aardio" path="tests\fileScanTest.aardio" comment="tests\fileScanTest.aardio"/>
+		<file name="historyTest.aardio" path="tests\historyTest.aardio" comment="tests\historyTest.aardio"/>
+		<file name="renamePlanTest.aardio" path="tests\renamePlanTest.aardio" comment="tests\renamePlanTest.aardio"/>
+		<file name="ruleEngineTest.aardio" path="tests\ruleEngineTest.aardio" comment="tests\ruleEngineTest.aardio"/>
+		<folder name="reference" path="tests\reference" comment="tests\reference">
+			<file name="go-baseline.txt" path="tests\reference\go-baseline.txt" comment="tests\reference\go-baseline.txt"/>
+		</folder>
+	</folder>
 </project>

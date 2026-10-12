@@ -1,0 +1,244 @@
+// frename.validate —— 重命名计划校验测试（纯内存，不触碰真实磁盘）
+//
+// 运行方式：在 aardio IDE 中打开本文件，按 F5（运行）。
+//
+// 本测试完全不接触真实磁盘：
+//   plan 表直接在内存里构造（不调用任何文件 API），
+//   「目标是否已存在」由 makeExists 造的假函数提供。
+// 因此不会读取、创建、修改、移动、删除或重命名任何真实文件。
+//
+// 说明：这里直接构造 plan 而不是用 renameplan.build，
+// 因为 build 会把非法目标名、未变化项过滤进 blocked，
+// 直接构造才能覆盖 validate 的全部分支。
+//
+// 覆盖场景：
+//   正常计划 / 重复目标 / 非法字符 / 保留设备名 / 目标占用（批次外与批次内）
+//   空路径 / 空目标名 / 源路径重复 / 源等于目标 / 仅大小写不同 / 空计划
+//   与 renameplan 集成 / 错误条目结构
+
+import console;
+import frename.filescan;
+import frename.renameplan;
+import frename.validate;
+
+//true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
+console.open(true);
+
+var passed = 0;
+var failed = 0;
+
+var expect = function(ok,id,desc,detail){
+	if(ok){
+		passed = passed + 1;
+	}
+	else {
+		failed = failed + 1;
+		console.log("✗ " ++ id ++ " " ++ desc ++ (detail ? ("：" ++ detail) : ""));
+	}
+}
+
+//构造一个 RenamePlan 结构（validate 只用到 operations 字段）
+var mkPlan = function(ops){
+	return { operations = ops; steps = {}; blocked = {}; warningCount = 0 };
+}
+
+//构造一个操作项
+var mkOp = function(idx,src,dst){
+	return { index = idx; sourcePath = src; targetPath = dst; tempPath = dst; status = "ok" };
+}
+
+//造一个「指定路径存在」的假函数；按 pathKey 比较，模拟 Windows 不区分大小写
+var makeExists = function(paths){
+	var set = {};
+
+	if(type(paths) == "table"){
+		var total = #paths;
+		for(i=1;total;1){
+			set[[ ..frename.filescan.pathKey(paths[i]) ]] = true;
+		}
+	}
+
+	return function(p){
+		return set[[ ..frename.filescan.pathKey(p) ]] ? true : false;
+	};
+}
+
+//在错误数组里找包含指定关键词的原因，返回是否找到
+var hasReason = function(arr,word){
+	if(type(arr) != "table") return false;
+
+	var total = #arr;
+	for(i=1;total;1){
+		var e = arr[i];
+		if(type(e) != "table") continue;
+		if(..string.indexOf(tostring(e.reason),word)) return true;
+	}
+	return false;
+}
+
+console.log("=========================================================");
+console.log("frename.validate —— 重命名计划校验测试（纯内存）");
+console.log("=========================================================");
+
+//================ 一、正常计划 =================
+
+var r1 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\b.txt');
+	mkOp(2,'C:\\t\\c.txt','C:\\t\\d.txt')
+}));
+
+expect( r1.ok, "V1a","正常计划应通过校验" );
+expect( #r1.errors == 0, "V1b","正常计划不应有错误", "实际=" ++ #r1.errors );
+expect( #r1.warnings == 0, "V1c","正常计划不应有警告", "实际=" ++ #r1.warnings );
+expect( !r1.checkedExistence, "V1d","未传 existsFn 时应标记未做存在性检查" );
+
+//================ 二、重复目标 =================
+
+var r2 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\x.txt');
+	mkOp(2,'C:\\t\\b.txt','C:\\t\\x.txt')
+}));
+
+expect( !r2.ok, "V2a","重复目标应判为不通过" );
+expect( #r2.errors == 2, "V2b","两项都应报错", "实际=" ++ #r2.errors );
+expect( hasReason(r2.errors,"相同的目标路径"), "V2c","原因应说明目标路径重复" );
+
+//================ 三、非法字符 =================
+
+var r3 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\a:b.txt')
+}));
+
+expect( !r3.ok, "V3a","含非法字符的目标名应判为不通过" );
+expect( hasReason(r3.errors,"不允许的字符"), "V3b","原因应指出非法字符" );
+
+//================ 四、保留设备名 =================
+
+var r4 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\con.txt')
+}));
+
+expect( !r4.ok, "V4a","保留设备名应判为不通过" );
+expect( hasReason(r4.errors,"保留名"), "V4b","原因应说明是保留名" );
+
+//================ 五、目标被批次外文件占用 =================
+
+var r5 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\b.txt')
+}), makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' }));
+
+expect( !r5.ok, "V5a","目标被批次外占用应判为不通过" );
+expect( r5.checkedExistence, "V5b","传入 existsFn 后应标记已做存在性检查" );
+expect( hasReason(r5.errors,"本批次之外"), "V5c","原因应说明是批次外占用" );
+
+//================ 六、目标被批次内源文件占用（链式）=================
+
+//A→B、B→C：目标 b.txt 存在，但它是本批次的源文件，两阶段可处理，只警告
+var r6 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\b.txt');
+	mkOp(2,'C:\\t\\b.txt','C:\\t\\c.txt')
+}), makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' }));
+
+expect( r6.ok, "V6a","链式计划应仍可通过校验", "errors=" ++ #r6.errors );
+expect( #r6.errors == 0, "V6b","链式计划不应有错误", "实际=" ++ #r6.errors );
+expect( #r6.warnings == 1, "V6c","链式计划应有 1 条警告", "实际=" ++ #r6.warnings );
+expect( hasReason(r6.warnings,"链式重命名"), "V6d","警告应说明是链式重命名" );
+
+//================ 七、空路径 =================
+
+var r7 = frename.validate.check(mkPlan({
+	mkOp(1,'','C:\\t\\b.txt')
+}));
+
+expect( !r7.ok, "V7a","空源路径应判为不通过" );
+expect( hasReason(r7.errors,"为空"), "V7b","原因应说明路径为空" );
+
+var r7b = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','')
+}));
+
+expect( !r7b.ok, "V7c","空目标路径应判为不通过" );
+expect( hasReason(r7b.errors,"为空"), "V7d","原因应说明路径为空" );
+
+//================ 八、空目标名 =================
+
+var r8 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\')
+}));
+
+expect( !r8.ok, "V8a","空目标名应判为不通过" );
+expect( hasReason(r8.errors,"目标文件名为空"), "V8b","原因应说明目标文件名为空" );
+
+//================ 九、源路径重复 =================
+
+var r9 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\x.txt');
+	mkOp(2,'C:\\t\\a.txt','C:\\t\\y.txt')
+}));
+
+expect( !r9.ok, "V9a","源路径重复应判为不通过" );
+expect( #r9.errors >= 2, "V9b","两项都应报错", "实际=" ++ #r9.errors );
+expect( hasReason(r9.errors,"源路径在计划中重复"), "V9c","原因应说明源路径重复" );
+
+//================ 十、源等于目标 =================
+
+var r10 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\a.txt','C:\\t\\a.txt')
+}));
+
+expect( !r10.ok, "V10a","源与目标完全相同应判为不通过" );
+expect( hasReason(r10.errors,"完全相同"), "V10b","原因应说明完全相同" );
+
+//================ 十一、仅大小写不同 =================
+
+var r11 = frename.validate.check(mkPlan({
+	mkOp(1,'C:\\t\\A.txt','C:\\t\\a.txt')
+}));
+
+expect( r11.ok, "V11a","仅大小写不同应仍可通过（有警告）", "errors=" ++ #r11.errors );
+expect( #r11.warnings == 1, "V11b","应有 1 条警告", "实际=" ++ #r11.warnings );
+expect( hasReason(r11.warnings,"大小写"), "V11c","警告应说明大小写问题" );
+
+//================ 十二、空计划 =================
+
+var r12 = frename.validate.check({});
+
+expect( !r12.ok, "V12a","空计划应判为不通过" );
+expect( #r12.errors == 1, "V12b","空计划应有 1 条错误", "实际=" ++ #r12.errors );
+
+//================ 十三、与 renameplan 集成 =================
+
+//renameplan.build 产出的正常计划，validate 应该直接通过
+var fsLike = makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' });
+
+var built = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\y.txt'; targetName="y.txt"; changed=true};
+	{sourcePath='C:\\t\\c.txt'; targetPath='C:\\t\\z.txt'; targetName="z.txt"; changed=true}
+}, fsLike);
+
+var r13 = frename.validate.check(built, fsLike);
+
+expect( r13.ok, "V13a","renameplan 生成的正常计划应通过校验",
+	"errors=" ++ #r13.errors );
+expect( #r13.errors == 0 && #r13.warnings == 0, "V13b","既不应有错误也不应有警告",
+	"errors=" ++ #r13.errors ++ " warnings=" ++ #r13.warnings );
+
+//================ 十四、错误条目结构 =================
+
+var r14 = frename.validate.check(mkPlan({
+	mkOp(7,'C:\\t\\a.txt','C:\\t\\con.txt')
+}));
+
+var e14 = r14.errors[1];
+expect( type(e14) == "table", "V14a","错误条目应是表" );
+expect( e14 != null && e14.index == 7, "V14b","错误条目应带上 index 便于定位" );
+expect( e14 != null && tostring(e14.sourcePath) == 'C:\\t\\a.txt', "V14c","错误条目应带源路径" );
+expect( e14 != null && tostring(e14.targetPath) == 'C:\\t\\con.txt', "V14d","错误条目应带目标路径" );
+expect( e14 != null && #tostring(e14.reason) > 0, "V14e","错误条目应带原因文本" );
+
+console.log("---------------------------------------------------------");
+console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
+console.log("---------------------------------------------------------");
+
+console.pause();
