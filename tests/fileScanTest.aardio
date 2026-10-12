@@ -1,0 +1,209 @@
+// frename 文件扫描 / 预检 —— 纯内存测试
+//
+// 运行方式：在 aardio IDE 中打开本文件，按 F5（运行）。
+//
+// 本测试完全不接触真实磁盘：
+//   - 所有路径都只是内存中的字符串
+//   - 「某个路径当前是否存在」由下面 makeExists 造的假函数提供
+// 因此本测试不会读取、创建、修改、移动、删除或重命名任何真实文件。
+//
+// 说明：filescan.scan 需要访问真实目录，属于界面人工验证范围，不在这里自动测试。
+
+import console;
+import frename.filescan;
+import frename.precheck;
+
+//true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
+console.open(true);
+
+var passed = 0;
+var failed = 0;
+
+//断言：ok 为真记通过，否则打印失败明细
+var assert = function(ok,id,desc,detail){
+	if(ok){
+		passed = passed + 1;
+	}
+	else {
+		failed = failed + 1;
+		console.log("✗ " ++ id ++ " " ++ desc ++ (detail ? ("：" ++ detail) : ""));
+	}
+}
+
+//造一个「指定路径存在」的假函数；按 pathKey 比较，模拟 Windows 不区分大小写
+var makeExists = function(paths){
+	var set = {};
+
+	if(type(paths) == "table"){
+		for(i=1;#paths;1){
+			set[[ ..frename.filescan.pathKey(paths[i]) ]] = true;
+		}
+	}
+
+	return function(p){
+		return set[[ ..frename.filescan.pathKey(p) ]] ? true : false;
+	};
+}
+
+console.log("=========================================================");
+console.log("frename 文件扫描 / 预检 —— 纯内存测试（不触碰真实磁盘）");
+console.log("=========================================================");
+
+//================ 一、路径规范化与比较键 =================
+
+assert( ..frename.filescan.pathKey('C:\\Dir\\File.txt') == ..frename.filescan.pathKey('c:/dir/file.txt'),
+	"A1","大小写与分隔符不同应视为同一路径",
+	..frename.filescan.pathKey('C:\\Dir\\File.txt') ++ " vs " ++ ..frename.filescan.pathKey('c:/dir/file.txt') );
+
+assert( ..frename.filescan.normalizePath('C:\\Dir\\') == 'C:\\Dir',
+	"A2","普通目录应去掉末尾分隔符", ..frename.filescan.normalizePath('C:\\Dir\\') );
+
+assert( ..frename.filescan.normalizePath('C:\\') == 'C:\\',
+	"A3","根目录应保留末尾分隔符", ..frename.filescan.normalizePath('C:\\') );
+
+assert( ..frename.filescan.pathKey("") == "", "A4","空路径的比较键应为空" );
+
+//================ 二、去重（同一完整路径只保留一次）=================
+
+var dedupeList = {};
+var dedupeKeys = {};
+..frename.filescan.addUniquePath(dedupeList,dedupeKeys,'C:\\t\\a.txt');
+var dup2 = ..frename.filescan.addUniquePath(dedupeList,dedupeKeys,'C:\\T\\A.txt');//仅大小写不同
+
+assert( #dedupeList == 1 && dup2 == false, "B1","仅大小写不同的同一路径应被去重", "实际条数=" ++ #dedupeList );
+
+//================ 三、目标文件名合法性 =================
+
+var nameCases = {
+	{ id="C1"; name="";      want=true;  desc="空文件名应判为非法" };
+	{ id="C2"; name="a/b.txt"; want=true;  desc="含路径分隔符应判为非法" };
+	{ id="C3"; name="con.txt"; want=true;  desc="保留设备名应判为非法" };
+	{ id="C4"; name="name."; want=true;  desc="以点结尾应判为非法" };
+	{ id="C5"; name="name "; want=true;  desc="以空格结尾应判为非法" };
+	{ id="C6"; name="a*b.txt"; want=true;  desc="含星号应判为非法" };
+	{ id="C7"; name="照片01.png"; want=null; desc="普通中文名应合法" };
+	{ id="C8"; name="a.b.txt";  want=null; desc="多个点的普通名应合法" }
+};
+
+for(i=1;#nameCases;1){
+	var c = nameCases[i];
+	var got = ..frename.precheck.invalidNameReason(c.name);
+
+	if(c.want){
+		assert( type(got) == "string", c.id, c.desc, "期望给出原因，实际=" ++ tostring(got) );
+	}
+	else {
+		assert( got === null, c.id, c.desc, "期望合法，实际=" ++ tostring(got) );
+	}
+}
+
+//================ 四、预检：目标占用分类 =================
+//每个用例给出 items、已存在路径，以及每项期望的 status / occupancy
+
+var precheckCases = {
+	//目标不存在：可以安全执行
+	{ id="D1"; desc="目标不存在应可执行";
+		exists={};
+		items={ {sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true} };
+		wantStatus={ "ok" }; wantOcc={ "none" } };
+
+	//名称没变：不需要执行
+	{ id="D2"; desc="未变化应标记为 unchanged";
+		exists={ 'C:\\t\\a.txt' };
+		items={ {sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\a.txt'; targetName="a.txt"; changed=false} };
+		wantStatus={ "unchanged" }; wantOcc={ "none" } };
+
+	//目标被「本批次之外」的文件占用：真实冲突
+	{ id="D3"; desc="目标被批次外文件占用应判为错误";
+		exists={ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' };
+		items={ {sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true} };
+		wantStatus={ "error" }; wantOcc={ "outside" } };
+
+	//A→B、B→C：目标 B 是本批次的源文件，不应简单当成冲突，
+	//而是「链式重命名」，标记为风险（能否成功取决于执行顺序）
+	{ id="D4"; desc="链式重命名 A→B、B→C 应标记为风险而非错误";
+		exists={ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' };
+		items={
+			{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+			{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=true}
+		};
+		wantStatus={ "warning"; "ok" }; wantOcc={ "batch_source"; "none" } };
+
+	//多个源文件算出同一个目标
+	{ id="D5"; desc="多个文件生成同一目标应判为错误";
+		exists={ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' };
+		items={
+			{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true};
+			{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true}
+		};
+		wantStatus={ "error"; "error" }; wantOcc={ "none"; "none" } };
+
+	//两个目标仅大小写不同：Windows 下是同一个文件
+	{ id="D6"; desc="目标仅大小写不同应判为错误";
+		exists={ 'C:\\t\\a.txt'; 'C:\\t\\b.txt' };
+		items={
+			{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\X.txt'; targetName="X.txt"; changed=true};
+			{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true}
+		};
+		wantStatus={ "error"; "error" }; wantOcc={ "none"; "none" } };
+
+	//只是自己改大小写：目标就是自己
+	{ id="D7"; desc="仅自身大小写变化应标记为风险";
+		exists={ 'C:\\t\\a.txt' };
+		items={ {sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\A.txt'; targetName="A.txt"; changed=true} };
+		wantStatus={ "warning" }; wantOcc={ "self_case" } };
+
+	//目标名为空
+	{ id="D8"; desc="目标名为空应判为错误";
+		exists={ 'C:\\t\\a.txt' };
+		items={ {sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\a.txt'; targetName=""; changed=true} };
+		wantStatus={ "error" }; wantOcc={ "none" } };
+
+	//规则本身计算失败
+	{ id="D9"; desc="规则计算失败应判为错误";
+		exists={ 'C:\\t\\a.txt' };
+		items={ {sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\a.txt'; targetName="a.txt"; changed=false; error="无效的正则表达式"} };
+		wantStatus={ "error" }; wantOcc={ "none" } }
+};
+
+for(i=1;#precheckCases;1){
+	var c = precheckCases[i];
+
+	var items = ..frename.precheck.check(c.items, makeExists(c.exists));
+
+	for(j=1;#items;1){
+		var it = items[j];
+
+		assert( it.status == c.wantStatus[j], c.id, c.desc ++ "（第 " ++ j ++ " 项状态）",
+			"期望=" ++ c.wantStatus[j] ++ " 实际=" ++ tostring(it.status)
+			++ " 原因=" ++ ..frename.precheck.reasonText(it) );
+
+		assert( it.occupancy == c.wantOcc[j], c.id, c.desc ++ "（第 " ++ j ++ " 项占用分类）",
+			"期望=" ++ c.wantOcc[j] ++ " 实际=" ++ tostring(it.occupancy) );
+
+		//预检之后源文件仍可能被其它程序改动，必须标记为「执行前需重新检查」
+		assert( it.needRecheck == true, c.id, "应标记执行前需重新检查（第 " ++ j ++ " 项）" );
+	}
+}
+
+//================ 五、统计 =================
+
+var statItems = ..frename.precheck.check({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};	// ok
+	{sourcePath='C:\\t\\c.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=false};	// unchanged
+	{sourcePath='C:\\t\\d.txt'; targetPath='C:\\t\\e.txt'; targetName="e.txt"; changed=true}		// error（e.txt 已存在且在批次外）
+}, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\c.txt'; 'C:\\t\\e.txt' }));
+
+var st = ..frename.precheck.statistics(statItems);
+
+assert( st.total == 3, "E1","统计总数应为 3", "实际=" ++ st.total );
+assert( st.unchanged == 1, "E2","统计未变化应为 1", "实际=" ++ st.unchanged );
+assert( st.ok == 1, "E3","统计可执行应为 1", "实际=" ++ st.ok );
+assert( st.error == 1, "E4","统计错误应为 1", "实际=" ++ st.error );
+assert( st.risky == 1, "E5","统计风险数应为 1", "实际=" ++ st.risky );
+
+console.log("---------------------------------------------------------");
+console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
+console.log("---------------------------------------------------------");
+
+console.pause();

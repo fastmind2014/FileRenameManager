@@ -1,0 +1,160 @@
+// frename.filescan —— 真实文件扫描与路径规范化
+//
+// 职责：
+//   1. 提供路径规范化、比较键、去重等纯函数（不触碰磁盘，可单测）
+//   2. 把用户选择的文件 / 文件夹整理成待处理文件列表（只读磁盘元数据）
+//
+// 严格限制：本模块只读取目录项与文件元数据，
+// 不创建、修改、移动、删除、重命名任何文件或目录，也不写入任何内容。
+
+import fsys;
+
+namespace frename.filescan{
+
+	//Windows 路径分隔符。
+	//注意：单引号内是转义字符串，'\\' 才表示一个反斜杠字符。
+	SEP = '\\';
+
+	//把路径规范成统一形式：分隔符统一为反斜杠，去掉末尾多余的分隔符。
+	//只用于比较与显示，绝不作为写回磁盘的路径。
+	normalizePath = function(path){
+		if(type(path) != "string") return "";
+
+		var s = ..string.replace(path,"/",..frename.filescan.SEP);
+		if(!#s) return "";
+
+		//去掉末尾分隔符，但保留 "C:\" 这类根目录形式
+		while(#s > 3 && ..string.right(s,1) == ..frename.filescan.SEP){
+			s = ..string.left(s,#s - 1);
+		}
+
+		return s;
+	}
+
+	//用于「是否为同一路径」的比较键：Windows 文件系统不区分大小写，统一转小写。
+	//分隔符与末尾斜杠也一并规范化，避免 "a\b" 与 "A/B" 被当成两个文件。
+	pathKey = function(path){
+		var s = ..frename.filescan.normalizePath(path);
+		if(!#s) return "";
+		return ..string.lower(s);
+	}
+
+	//把路径加入列表并按比较键去重，返回是否新增。
+	//list 是路径数组，keys 是已加入键的集合（表），跨多次调用可继续复用。
+	addUniquePath = function(list,keys,path){
+		var k = ..frename.filescan.pathKey(path);
+		if(!#k) return false;
+		if(keys[[k]]) return false;
+
+		keys[[k]] = true;
+		..table.push(list,path);
+		return true;
+	}
+
+	//读取单个文件的元数据，失败返回 null,错误原因
+	readFileInfo = function(full){
+		var info = ..io.splitpath(full);
+		if(type(info) != "table") return null,"路径无法解析";
+		if(!#info.file) return null,"路径中没有文件名";
+
+		var size = ..io.getSize(full);
+		var modTime;
+		var tm = ..fsys.getTime(full);
+		if(type(tm) == "table" && tm.write !== null) modTime = tm.write;
+
+		return {
+			path = full;
+			dir = info.dir;
+			name = info.file;
+			size = (type(size) == "number") ? size : 0;
+			modTime = modTime;
+		};
+	}
+
+	//把单个路径加入结果；重复、目录、失败分别记录
+	addOne = function(files,errors,keys,stat,full){
+		var path = ..frename.filescan.normalizePath(full);
+		if(!#path){
+			..table.push(errors,{ path=tostring(full); reason="路径为空" });
+			return;
+		}
+
+		//目录本身不作为待处理文件
+		if(..fsys.isDir(path)) return;
+
+		if(!..io.exist(path)){
+			..table.push(errors,{ path=path; reason="文件不存在或无法访问" });
+			return;
+		}
+
+		var k = ..frename.filescan.pathKey(path);
+		if(keys[[k]]){
+			stat.dupCount = stat.dupCount + 1;		//同一完整路径重复，已跳过
+			return;
+		}
+		keys[[k]] = true;
+
+		var info,reason = ..frename.filescan.readFileInfo(path);
+		if(!info){
+			..table.push(errors,{ path=path; reason=(reason : "无法读取文件信息") });
+			return;
+		}
+
+		..table.push(files,info);
+	}
+
+	//扫描用户选择的路径
+	//
+	//paths  单个路径字符串，或路径数组
+	//keys   可选，已加载文件的比较键集合；传入后可实现多次加载不重复
+	//
+	//文件夹行为：只取其「直接子文件」，不递归进入子文件夹；文件夹本身不作为待处理文件。
+	//
+	//返回表：
+	//   files     待处理文件数组，每项 { path; dir; name; size; modTime }
+	//   errors    失败明细，每项 { path; reason }（不静默跳过）
+	//   dirCount  扫描到的文件夹个数
+	//   dupCount  被去重跳过的重复路径个数
+	scan = function(paths,keys){
+		var files = {};
+		var errors = {};
+		if(type(keys) != "table") keys = {};
+		var stat = { dupCount = 0 };
+		var dirCount = 0;
+
+		if(type(paths) == "string") paths = { paths };
+		if(type(paths) != "table") paths = {};
+
+		for(i=1;#paths;1){
+			var p = paths[i];
+			if(type(p) != "string" || !#p) continue;
+
+			if(..fsys.isDir(p)){
+				dirCount = dirCount + 1;
+
+				//fsys.list 只列出直接子项，不递归；第一个返回值是文件数组
+				var names = ..fsys.list(p);
+				if(type(names) != "table"){
+					..table.push(errors,{ path=p; reason="无法读取该目录（可能不存在或没有访问权限）" });
+					continue;
+				}
+
+				for(j=1;#names;1){
+					var full = ..io.joinpath(p, names[j]);
+					//子文件夹既不递归，也不作为待处理文件
+					..frename.filescan.addOne(files,errors,keys,stat,full);
+				}
+			}
+			else {
+				..frename.filescan.addOne(files,errors,keys,stat,p);
+			}
+		}
+
+		return {
+			files = files;
+			errors = errors;
+			dirCount = dirCount;
+			dupCount = stat.dupCount;
+		};
+	}
+}
