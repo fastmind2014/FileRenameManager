@@ -1,0 +1,138 @@
+// FileRenameManager —— 性能测试工具（仅测试用，不修改任何核心模块）
+//
+// 运行方式：在 aardio IDE 中打开本文件，按 F5。
+//
+// 做的事：
+//   1. 在临时目录自动生成 N 个文件（默认依次跑 1000、10000）；
+//   2. 计时「预览」：renameplan.build + validate.check；
+//   3. 计时「执行」：fileadapter 真实 io.move
+//      （本用例目标名互不冲突，走单阶段，每个文件只移动一次）；
+//   4. 打印执行前后进程内存变化（若运行时支持）；
+//   5. 执行成功后自动撤销（rollback）并清理临时文件，重复运行安全。
+//
+// 安全：只操作自己新建的临时目录，不会碰任何用户文件，结束时会删除。
+
+import console;
+import frename.filescan;
+import frename.renameplan;
+import frename.validate;
+import frename.fileadapter;
+import frename.executor;
+
+console.open(true);
+console.log("=== FileRenameManager 性能测试 ===");
+
+//要测试的批量规模（可改）
+var COUNTS = { 1000; 10000 };
+
+//临时目录：放在 aardio 运行目录下的 perf_test_tmp（运行完会清空删除）
+var BASE = ..io.fullpath("~\perf_test_tmp");
+
+//进程内存（字节）；部分运行时可能不支持，捕获后返回 null
+import process;
+var memBytes = function(){
+	try {
+		return process.getMemoryUsage();
+	}
+	catch(e){
+		return null;
+	}
+};
+var memText = function(b){
+	if(b === null) return "N/A（请用任务管理器观察）";
+	return tostring(b / 1024 / 1024, "%.2f") ++ " MB";
+};
+
+var pad6 = function(n){
+	return ..string.format("%06d", n);
+};
+
+//造 N 个文件，并返回 items（renameplan.build 需要的输入结构）
+var prepare = function(n){
+	..io.createDir(BASE);
+	var items = {};
+	for(i=1;n;1){
+		var name = "file_" ++ pad6(i) ++ ".txt";
+		var path = ..io.joinpath(BASE, name);
+		//写 1 字节，让 move 更贴近真实
+		..io.writeFile(path, "x");
+
+		var newName = "P_" ++ name;
+		..table.push(items, {
+			sourcePath = path;
+			targetPath = ..io.joinpath(BASE, newName);
+			targetName = newName;
+			changed = true;
+			error = null;
+		});
+	}
+	return items;
+};
+
+var cleanup = function(items){
+	//先撤销改名（若存在 P_ 文件），再删除原文件，最后删目录
+	if(type(items) == "table"){
+		for(i=1;#items;1){
+			var it = items[i];
+			if(type(it) != "table") continue;
+			//撤销后的原名文件
+			if(..io.exist(it.sourcePath)) ..io.remove(it.sourcePath);
+			//若撤销没跑，可能有 P_ 文件
+			if(..io.exist(it.targetPath)) ..io.remove(it.targetPath);
+		}
+	}
+	try {
+		if(..io.exist(BASE)) ..io.removeDir(BASE);
+	}
+	catch(e){}
+};
+
+for(ci=1;#COUNTS;1){
+	var N = COUNTS[ci];
+	console.log("");
+	console.log("----- 规模：" ++ N ++ " 个文件 -----");
+
+	var items = prepare(N);
+	var fs = ..frename.fileadapter.createWindowsFs();
+
+	//预览计时：计划生成 + 静态校验
+	var memBefore = memBytes();
+	var t0 = ..time.tick();
+	var plan = ..frename.renameplan.build(items, fs.existsFunc);
+	var vr = ..frename.validate.check(plan, fs.existsFunc);
+	var t1 = ..time.tick();
+
+	console.log("可操作项数：" ++ #plan.operations ++ "，阻塞项：" ++ #plan.blocked
+		++ "，校验错误：" ++ #vr.errors ++ "，警告：" ++ #vr.warnings);
+	console.log("预览耗时：" ++ tostring(t1 - t0) ++ " ms");
+
+	//执行计时：真实 io.move（两阶段）
+	var t2 = ..time.tick();
+	var res = ..frename.executor.executePlan(plan, fs);
+	var t3 = ..time.tick();
+	var memAfter = memBytes();
+
+	console.log("执行耗时：" ++ tostring(t3 - t2) ++ " ms");
+	console.log("内存：" ++ memText(memBefore) ++ " -> " ++ memText(memAfter)
+		++ (memBefore !== null && memAfter !== null
+			? ("（变化 " ++ tostring((memAfter - memBefore) / 1024 / 1024, "%.2f") ++ " MB）")
+			: ""));
+	console.log("执行结果：" ++ (res.success ? "成功" : "失败"));
+	if(!res.success){
+		console.log("  失败原因：" ++ tostring(res.failedStep.reason)
+			++ "；已自动恢复：" ++ (res.rollbackOk ? "是" : "否"));
+	}
+
+	//成功则撤销，把文件还原回原名，便于 cleanup 删除
+	if(res.success){
+		var rb = ..frename.executor.rollback(res.executed, fs);
+		console.log("自动撤销（还原）：" ++ (rb.ok ? "成功" : "失败 " ++ #rb.failed ++ " 步"));
+	}
+
+	cleanup(items);
+	console.log("临时文件已清理。");
+}
+
+console.log("");
+console.log("=== 测试结束 ===");
+console.pause(true);
