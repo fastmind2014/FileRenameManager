@@ -59,13 +59,17 @@ var t1 = frename.renameplan.build({
 }, makeExists({ 'C:\\t\\a.txt' }));
 
 expect( #t1.operations == 1, "T1a","简单改名应生成 1 个可执行操作", "实际=" ++ #t1.operations );
-expect( #t1.steps == 2, "T1b","简单改名应有 2 个步骤（两阶段）", "实际=" ++ #t1.steps );
+//无冲突（目标名当前无人占用）时走单阶段：一步直接改到位，不经临时名中转
+expect( !t1.twoPhase, "T1b","简单改名应判定为单阶段", "twoPhase=" ++ tostring(t1.twoPhase) );
+expect( #t1.steps == 1, "T1b2","简单改名应只有 1 个步骤（单阶段直改）", "实际=" ++ #t1.steps );
 expect( #t1.blocked == 0, "T1c","简单改名不应有被拦截项", "实际=" ++ #t1.blocked );
-expect( t1.steps[1].phase == 1 && t1.steps[2].phase == 2, "T1d","步骤顺序应是先阶段 1 再阶段 2" );
+expect( t1.steps[1].phase == 1 && t1.steps[1].from == 'C:\\t\\a.txt'
+	&& t1.steps[1].to == 'C:\\t\\b.txt',
+	"T1d","单阶段步骤应直接由原路径改到目标路径" );
 
 var s1 = frename.renameplan.simulate(t1, makeExists({ 'C:\\t\\a.txt' }));
 
-expect( s1.doneCount == 2 && #s1.failed == 0, "T1e","模拟执行应全部成功",
+expect( s1.doneCount == 1 && #s1.failed == 0, "T1e","模拟执行应全部成功",
 	"成功=" ++ s1.doneCount ++ " 失败=" ++ #s1.failed );
 expect( stateHas(s1.state,'C:\\t\\b.txt') && !stateHas(s1.state,'C:\\t\\a.txt'),
 	"T1f","模拟后应只有目标文件存在" );
@@ -81,6 +85,8 @@ var t2 = frename.renameplan.build({
 expect( #t2.operations == 2, "T2a","链式改名应生成 2 个可执行操作", "实际=" ++ #t2.operations );
 expect( #t2.blocked == 0, "T2b","链式改名的两项都不应被拦截", "实际=" ++ #t2.blocked );
 expect( #t2.steps == 4, "T2c","链式改名应有 4 个步骤", "实际=" ++ #t2.steps );
+//目标被本批次其它文件占用 -> 必须两阶段（先转临时名），直接改会撞车
+expect( t2.twoPhase, "T2c2","链式改名应判定为两阶段", "twoPhase=" ++ tostring(t2.twoPhase) );
 
 //前一半是阶段 1（进临时名），后一半是阶段 2（进最终名）
 expect( t2.steps[1].phase == 1 && t2.steps[2].phase == 1

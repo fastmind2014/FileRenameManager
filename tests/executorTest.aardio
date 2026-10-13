@@ -107,9 +107,10 @@ var items1 = {
 var plan1 = frename.renameplan.build(items1, fs1.existsFunc);
 var res1 = frename.executor.executePlan(plan1, fs1);
 
-expect( #plan1.steps == 6, "E1a","三个文件应生成 6 个步骤（两阶段）", "实际=" ++ #plan1.steps );
+//三个目标名都无人占用 -> 单阶段：3 个步骤一次改到位（原来两阶段是 6 步）
+expect( #plan1.steps == 3, "E1a","无冲突的三个文件应生成 3 个步骤（单阶段）", "实际=" ++ #plan1.steps );
 expect( res1.success, "E1b","正常批量改名应全部成功", res1.message );
-expect( #res1.executed == 6, "E1c","应成功执行 6 步", "实际=" ++ #res1.executed );
+expect( #res1.executed == 3, "E1c","应成功执行 3 步", "实际=" ++ #res1.executed );
 expect( !res1.rolledBack, "E1d","成功时不应触发回滚" );
 expect( fs1.has('C:\\t\\x.txt') && fs1.has('C:\\t\\y.txt') && fs1.has('C:\\t\\z.txt'),
 	"E1e","三个目标文件都应存在" );
@@ -196,7 +197,7 @@ expect( frename.executor.canUndo(res6.executed), "E6b","执行过步骤后应可
 var rb6 = frename.executor.rollback(res6.executed, fs6);
 
 expect( rb6.ok, "E6c","undo 应全部成功" );
-expect( rb6.doneCount == 6, "E6d","应撤销 6 步", "实际=" ++ rb6.doneCount );
+expect( rb6.doneCount == 3, "E6d","应撤销 3 步", "实际=" ++ rb6.doneCount );
 expect( fs6.has('C:\\t\\a.txt') && fs6.has('C:\\t\\b.txt') && fs6.has('C:\\t\\c.txt'),
 	"E6e","undo 后三个源文件都应恢复" );
 expect( !fs6.has('C:\\t\\x.txt') && !fs6.has('C:\\t\\y.txt') && !fs6.has('C:\\t\\z.txt'),

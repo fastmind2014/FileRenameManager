@@ -1,15 +1,21 @@
 // frename.renameplan —— 安全重命名执行层（纯逻辑 + 内存模拟）
 //
 // 职责：
-//   1. 把「源路径 -> 目标路径」整理成一份两阶段的重命名计划（RenamePlan）
+//   1. 把「源路径 -> 目标路径」整理成一份重命名计划（RenamePlan）
 //   2. 在内存中模拟执行这份计划，验证它是否真的能走通
 //   3. 记录 Undo 日志，支持把已执行的步骤逆序撤销
 //
-// 为什么需要两阶段：
+// 为什么需要两阶段，以及为什么只在必要时才两阶段：
 //   直接按顺序改名时，如果 A 要改成 B，而 B 本身也是本批次待改名的文件，
 //   那么 A->B 会失败（B 已被占用），这就是经典的循环依赖问题。
 //   两阶段的做法是先把所有源文件改到一个唯一的临时名，
 //   再把临时名改到最终目标名；这样每个阶段内部都不会互相撞车。
+//
+//   但两阶段会让每个文件被移动两次。若本批次不存在「目标被其它待处理文件占用」
+//   （链式 / 循环）或「仅大小写变化」的情形，目标名当前根本没人使用，
+//   直接一次改到位即可，文件移动次数减半。
+//   判定依据见 build 里的 twoPhase：precheck 恰好把上述两类标为 warning，
+//   所以 warningCount == 0 时走单阶段（N 步），否则退回两阶段（2N 步）。
 //
 // 严格限制：本模块只做计划与内存模拟。
 // 它不创建、修改、移动、删除或重命名任何真实文件，
@@ -86,34 +92,60 @@ namespace frename.renameplan{
 
 			if(it.status == "warning") warningCount = warningCount + 1;
 
-			var info = ..io.splitpath(it.sourcePath);
-			var temp = ..frename.renameplan.tempName(info.dir,i,info.ext,existsFn);
-
-			if(!temp){
-				..table.push(blocked,{ index=i; sourcePath=it.sourcePath; reason="无法生成不冲突的临时文件名" });
-				continue;
-			}
-
 			..table.push(operations,{
 				index = i;
 				sourcePath = it.sourcePath;
 				targetPath = it.targetPath;
-				tempPath = temp;
+				tempPath = null;	//只在需要两阶段时才补上临时名
 				status = it.status;
 			});
 		}
 
-		//两阶段步骤：先把全部源文件转入临时名，再全部转入最终目标名
-		var steps = {};
+		//---------- 按需两阶段 ----------
+		//只有「目标被本批次其它待处理文件占用」（链式 A→B、B→C，或循环互换）
+		//以及「仅大小写变化」这两类情形才必须先转临时名再转目标名。
+		//判定依据：precheck 恰好把这两类标为 warning，其余标为 ok。
+		//所以 warningCount == 0 时目标名当前无人占用，直接一次改到位，
+		//文件移动次数从 2N 降到 N。
+		var twoPhase = (warningCount > 0);
 
-		for(i=1;#operations;1){
-			var op = operations[i];
-			..table.push(steps,{ phase=1; from=op.sourcePath; to=op.tempPath; index=op.index });
+		if(twoPhase){
+			var ops2 = {};
+			for(i=1;#operations;1){
+				var op = operations[i];
+				var info = ..io.splitpath(op.sourcePath);
+				var temp = ..frename.renameplan.tempName(info.dir,op.index,info.ext,existsFn);
+
+				if(!temp){
+					..table.push(blocked,{ index=op.index; sourcePath=op.sourcePath; reason="无法生成不冲突的临时文件名" });
+					continue;
+				}
+
+				op.tempPath = temp;
+				..table.push(ops2,op);
+			}
+			operations = ops2;
 		}
 
-		for(i=1;#operations;1){
-			var op = operations[i];
-			..table.push(steps,{ phase=2; from=op.tempPath; to=op.targetPath; index=op.index });
+		//步骤：两阶段时先全部进临时名再全部进目标名；单阶段时直接改到目标名
+		var steps = {};
+
+		if(twoPhase){
+			for(i=1;#operations;1){
+				var op = operations[i];
+				..table.push(steps,{ phase=1; from=op.sourcePath; to=op.tempPath; index=op.index });
+			}
+
+			for(i=1;#operations;1){
+				var op = operations[i];
+				..table.push(steps,{ phase=2; from=op.tempPath; to=op.targetPath; index=op.index });
+			}
+		}
+		else {
+			for(i=1;#operations;1){
+				var op = operations[i];
+				..table.push(steps,{ phase=1; from=op.sourcePath; to=op.targetPath; index=op.index });
+			}
 		}
 
 		return {
@@ -121,6 +153,7 @@ namespace frename.renameplan{
 			steps = steps;
 			blocked = blocked;
 			warningCount = warningCount;
+			twoPhase = twoPhase;
 		};
 	}
 

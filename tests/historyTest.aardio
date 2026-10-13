@@ -121,7 +121,8 @@ expect( s1 != null, "H1a","成功执行应能添加记录" );
 expect( s1.success, "H1b","记录应标记为成功" );
 expect( s1.undoable, "H1c","成功执行的会话应可撤销" );
 expect( !s1.undone, "H1d","新会话不应处于已撤销状态" );
-expect( #s1.executionLog == 6, "H1e","应保存 6 步执行日志", "实际=" ++ #s1.executionLog );
+//items3 三个目标名互不冲突 -> 单阶段，3 步（原来两阶段是 6 步）
+expect( #s1.executionLog == 3, "H1e","应保存 3 步执行日志", "实际=" ++ #s1.executionLog );
 expect( s1.note == "第一次执行", "H1f","应保存附加说明", "实际=" ++ s1.note );
 expect( s1.id == 1, "H1g","第一条会话 id 应为 1", "实际=" ++ s1.id );
 expect( h.count() == 1, "H1h","应有 1 条会话", "实际=" ++ h.count() );

@@ -90,7 +90,9 @@ namespace frename.executor{
 				result.failedStep = { step=s; reason="目标路径已被占用：" ++ s.to };
 				break;
 			}
-			if(!c.moveFunc(s.from,s.to)){
+			//第三个参数 true：上面刚查过「源存在、目标未被占用」，
+			//让适配层不必再重复查一遍，批量执行时每步省 2 次磁盘查询
+			if(!c.moveFunc(s.from,s.to,true)){
 				result.failedStep = { step=s; reason="移动失败：" ++ s.from ++ " → " ++ s.to };
 				break;
 			}

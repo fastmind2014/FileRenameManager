@@ -58,28 +58,37 @@ namespace frename.fileadapter{
 		}
 
 		//移动 / 改名
-		fs.moveFunc = function(from,to){
+		//
+		//prechecked 可选：为真表示调用方（executor）刚刚已经确认过
+		//「源存在、目标不存在」，这里就不再重复查一遍 io.exist。
+		//批量执行时每步省掉 2 次磁盘查询（1500 个文件约省 6000 次）。
+		//撤销（rollback）走的是不带 prechecked 的调用，仍然完整检查。
+		//注意：即便跳过检查，io.move 本身失败照样会返回失败原因并触发回滚，
+		//安全性没有降低。
+		fs.moveFunc = function(from,to,prechecked){
 			if(type(from) != "string" || !#from) return fail("源路径为空或不是字符串");
 			if(type(to) != "string" || !#to) return fail("目标路径为空或不是字符串");
 
-			//前置检查：让失败原因更具体（executor 自己也会查，但这里能说清是哪一种）
-			var srcOk;
-			try{
-				srcOk = ..io.exist(from) ? true : false;
-			}
-			catch(e){
-				return fail("检查源路径时出错：" ++ tostring(e));
-			}
-			if(!srcOk) return fail("源文件不存在：" ++ from);
+			if(!prechecked){
+				//前置检查：让失败原因更具体（说清是源不存在还是目标被占用）
+				var srcOk;
+				try{
+					srcOk = ..io.exist(from) ? true : false;
+				}
+				catch(e){
+					return fail("检查源路径时出错：" ++ tostring(e));
+				}
+				if(!srcOk) return fail("源文件不存在：" ++ from);
 
-			var dstOk;
-			try{
-				dstOk = ..io.exist(to) ? true : false;
+				var dstOk;
+				try{
+					dstOk = ..io.exist(to) ? true : false;
+				}
+				catch(e){
+					return fail("检查目标路径时出错：" ++ tostring(e));
+				}
+				if(dstOk) return fail("目标路径已存在，不覆盖：" ++ to);
 			}
-			catch(e){
-				return fail("检查目标路径时出错：" ++ tostring(e));
-			}
-			if(dstOk) return fail("目标路径已存在，不覆盖：" ++ to);
 
 			var ok;
 			try{
