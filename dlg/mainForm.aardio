@@ -711,7 +711,18 @@ var buildItems = function(res,isReal){
 	return items;
 }
 
+//---------- 预览刷新防抖 ----------
+//文本框每敲一个字符都会触发 onChange，若每次都立刻刷新，
+//每敲一下就要重算整份预览（真实文件还要再跑一遍磁盘预检），输入会明显卡顿。
+//这里在停止输入一小段时间后才刷新，连续输入期间只保留最后一次。
+var PREVIEW_DELAY = 300;	//停止输入后延迟多久刷新（毫秒）
+var previewTimer = null;	//尚未触发的延迟刷新定时器
+var previewSeq = 0;			//刷新序号，用来让已经过期的延迟刷新自动作废
+
 var refreshPreview = function(){
+	//立即刷新会让「还没触发的延迟刷新」自动作废，避免重复刷新
+	previewSeq = previewSeq + 1;
+
 	var res;
 	var errText;
 	var files,isReal = buildPreviewFiles();
@@ -741,6 +752,13 @@ var refreshPreview = function(){
 		return;
 	}
 
+	//批量刷新：先关掉列表重绘，再逐行插入，避免上千行每行都触发重排重绘。
+	//WM_SETREDRAW = 0xB。用 try 包住：万一该 API 不可用就退化成普通刷新，不影响功能。
+	try{
+		::User32.SendMessageInt(winform.lvPreview.hwnd, 0xB, 0, 0);
+	}
+	catch(e){}
+
 	winform.lvPreview.clear();
 
 	//引擎只负责算文件名，目标完整路径由「源文件所在目录 + 目标文件名」拼出来
@@ -769,6 +787,13 @@ var refreshPreview = function(){
 		});
 	}
 
+	//恢复重绘并强制刷新一次
+	try{
+		::User32.SendMessageInt(winform.lvPreview.hwnd, 0xB, 1, 0);
+		winform.lvPreview.invalidate();
+	}
+	catch(e){}
+
 	lastPreviewRows = items;
 
 	//状态栏统计
@@ -792,6 +817,41 @@ var refreshPreview = function(){
 	setStatus(head);
 }
 
+//延迟刷新预览（供文本输入框使用）。
+//注意：本函数必须定义在 refreshPreview 之后 —— aardio 的局部变量作用域从声明处
+//才开始，若写在前面，这里引用的 refreshPreview 会被当成全局变量（运行时为 null）。
+var refreshPreviewLater = function(){
+	previewSeq = previewSeq + 1;
+	var seq = previewSeq;
+
+	//先取消上一次还没触发的刷新，连续输入时只留最后一次
+	if(previewTimer !== null){
+		try{ winform.clearTimeout(previewTimer); }catch(e){}
+		previewTimer = null;
+	}
+
+	var tid;
+	try{
+		tid = winform.setTimeout(
+			function(){
+				//期间又有新输入、或已经手动刷新过了，这次就作废
+				if(seq != previewSeq) return;
+				previewTimer = null;
+				refreshPreview();
+			},
+			PREVIEW_DELAY
+		);
+	}
+	catch(e){
+		//不支持定时器就退化为立即刷新，保证功能可用
+		previewTimer = null;
+		refreshPreview();
+		return;
+	}
+
+	previewTimer = tid;
+}
+
 //---------- 执行与撤销 ----------
 
 //操作历史（纯内存）：保存 executePlan 的 executionResult 与 executionLog。
@@ -806,20 +866,33 @@ var isBusy = false;
 var syncFilesBySteps = function(steps){
 	if(type(steps) != "table") return;
 
+	//一次建「路径键 -> 文件下标」索引，避免每一步都遍历整个文件表。
+	//原来这里是「步骤 × 文件」双重循环，且最内层每次都重算两个 pathKey：
+	//1500 个文件时约 900 万次 pathKey，是执行后界面同步最大的耗时点。
+	var index = {};
+	for(j=1;#realFiles;1){
+		index[[ ..frename.filescan.pathKey(realFiles[j].path) ]] = j;
+	}
+
 	for(i=1;#steps;1){
 		var e = steps[i];
 		if(type(e) != "table") continue;
 
-		for(j=1;#realFiles;1){
-			var f = realFiles[j];
-			if(..frename.filescan.pathKey(f.path) != ..frename.filescan.pathKey(e.from)) continue;
+		var fromKey = ..frename.filescan.pathKey(e.from);
+		var j = index[[fromKey]];
+		if(!j) continue;	//这一步的文件不在当前列表里
 
-			var info = ..io.splitpath(e.to);
-			f.path = e.to;
-			f.name = info.file;
-			f.dir = info.dir;
-			break;
-		}
+		var f = realFiles[j];
+		var info = ..io.splitpath(e.to);
+		f.path = e.to;
+		f.name = info.file;
+		f.dir = info.dir;
+
+		//同步维护索引：两阶段执行时同一个文件会连续出现两步
+		//（原名→临时名→目标名），第二步的 from 就是第一步的 to，
+		//索引不更新就找不到了
+		index[[fromKey]] = null;
+		index[[ ..frename.filescan.pathKey(e.to) ]] = j;
 	}
 
 	//重建去重键：撤销后路径变了，旧键会把同一个文件误判成重复
@@ -1333,7 +1406,11 @@ var onParamChanged = function(row,isCombo){
 	}
 
 	updateRuleRow(selRule);
-	refreshPreview();
+
+	//下拉框是一次性选择，立即刷新；
+	//文本框每敲一个字符都触发，延迟刷新，避免连续输入时反复重算整份预览
+	if(isCombo) refreshPreview();
+	else refreshPreviewLater();
 }
 
 //用函数包一层再绑定：参数 row 每次调用都是独立的，
