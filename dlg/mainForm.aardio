@@ -31,11 +31,17 @@
 
 import win.ui;
 import win.ui.minmax;
+import thread;
 import fsys.dlg;
 import fsys.dlg.dir;
 import frename;
 import frename.filescan;
 import frename.precheck;
+import frename.renameplan;
+import frename.validate;
+import frename.executor;
+import frename.history;
+import frename.fileadapter;
 
 /*DSG{{*/
 var winform = win.form(text="FileRenameManager - 规则编辑与预览";right=960;bottom=644)
@@ -72,7 +78,9 @@ lblPreview={cls="static";text="预览（未加载真实文件时为内存模拟�
 btnLoadFiles={cls="button";text="加载文件";left=464;top=36;right=560;bottom=64;z=32};
 btnLoadDir={cls="button";text="加载文件夹";left=568;top=36;right=676;bottom=64;z=33};
 btnClearFiles={cls="button";text="清空文件列表";left=684;top=36;right=792;bottom=64;z=34};
-lvPreview={cls="listview";left=464;top=72;right=948;bottom=592;edge=1;fullRow=1;gridLines=1;z=30};
+btnExecute={cls="button";text="执行重命名";left=464;top=68;right=704;bottom=96;z=35};
+btnUndo={cls="button";text="撤销上一次操作";left=712;top=68;right=948;bottom=96;z=36};
+lvPreview={cls="listview";left=464;top=104;right=948;bottom=592;edge=1;fullRow=1;gridLines=1;z=30};
 lblStatus={cls="static";text="就绪";left=12;top=602;right=948;bottom=630;edge=1;z=31}
 )
 /*}}*/
@@ -418,7 +426,15 @@ var applyLayout = function(cx,cy){
 	winform.btnLoadDir.setPos(rightX + fileBtnW + 8 * dpiX,fileBtnY,fileBtnW,fileBtnH);
 	winform.btnClearFiles.setPos(rightX + (fileBtnW + 8 * dpiX) * 2,fileBtnY,fileBtnW,fileBtnH);
 
-	var previewTop = fileBtnY + fileBtnH + g8y;
+	//第二行：执行 / 撤销。这两个按钮会真的改动磁盘，单独一行避免误点
+	var execBtnY = fileBtnY + fileBtnH + 6 * dpiY;
+	var execBtnW = (rightW - 8 * dpiX) / 2;
+	if(execBtnW < 90 * dpiX) execBtnW = 90 * dpiX;
+
+	winform.btnExecute.setPos(rightX,execBtnY,execBtnW,fileBtnH);
+	winform.btnUndo.setPos(rightX + execBtnW + 8 * dpiX,execBtnY,execBtnW,fileBtnH);
+
+	var previewTop = execBtnY + fileBtnH + g8y;
 	winform.lvPreview.setPos(rightX,previewTop,rightW,statusTop - g8y - previewTop);
 
 	//底部
@@ -659,6 +675,42 @@ var buildPreviewFiles = function(){
 	return MOCK_FILES,false;
 }
 
+//由预览结果构造「预检 / 校验 / 执行」共用的 items。
+//真实文件时带完整路径；模拟数据只有文件名，没有真实路径。
+var buildItems = function(res,isReal){
+	var items = {};
+
+	for(i=1;#res;1){
+		var r = res[i];
+
+		var sourcePath;
+		var dir;
+		if(isReal){
+			var f = realFiles[i];
+			sourcePath = f.path;
+			dir = f.dir;
+		}
+		else {
+			sourcePath = r.originalName;	//模拟数据没有真实路径
+			dir = "";
+		}
+
+		var targetPath = #dir ? ..io.joinpath(dir,r.newName) : r.newName;
+
+		..table.push(items,{
+			sourcePath = sourcePath;
+			targetPath = targetPath;
+			targetName = r.newName;
+			changed = r.changed;
+			error = r.error;
+			originalName = r.originalName;
+			newName = r.newName;
+		});
+	}
+
+	return items;
+}
+
 var refreshPreview = function(){
 	var res;
 	var errText;
@@ -692,34 +744,7 @@ var refreshPreview = function(){
 	winform.lvPreview.clear();
 
 	//引擎只负责算文件名，目标完整路径由「源文件所在目录 + 目标文件名」拼出来
-	var items = {};
-	for(i=1;#res;1){
-		var r = res[i];
-
-		var sourcePath;
-		var dir;
-		if(isReal){
-			var f = realFiles[i];
-			sourcePath = f.path;
-			dir = f.dir;
-		}
-		else {
-			sourcePath = r.originalName;	//模拟数据没有真实路径
-			dir = "";
-		}
-
-		var targetPath = #dir ? ..io.joinpath(dir,r.newName) : r.newName;
-
-		..table.push(items,{
-			sourcePath = sourcePath;
-			targetPath = targetPath;
-			targetName = r.newName;
-			changed = r.changed;
-			error = r.error;
-			originalName = r.originalName;
-			newName = r.newName;
-		});
-	}
+	var items = buildItems(res,isReal);
 
 	//预检只在真实文件上有意义：模拟数据没有真实路径，用 io.exist 判断会误判
 	if(isReal){
@@ -765,6 +790,245 @@ var refreshPreview = function(){
 	}
 
 	setStatus(head);
+}
+
+//---------- 执行与撤销 ----------
+
+//操作历史（纯内存）：保存 executePlan 的 executionResult 与 executionLog。
+//变量名特意不叫 history，避免和 aardio 内置对象混淆。
+var opHistory = frename.history.create();
+
+//执行 / 撤销进行中标志：异步执行期间禁用两个按钮并忽略重复点击，避免并发改动文件
+var isBusy = false;
+
+//把一批「from -> to」步骤反映到 realFiles 上，让界面与磁盘保持一致。
+//执行成功后按执行步骤正向同步；撤销后按逆向步骤同步。
+var syncFilesBySteps = function(steps){
+	if(type(steps) != "table") return;
+
+	for(i=1;#steps;1){
+		var e = steps[i];
+		if(type(e) != "table") continue;
+
+		for(j=1;#realFiles;1){
+			var f = realFiles[j];
+			if(..frename.filescan.pathKey(f.path) != ..frename.filescan.pathKey(e.from)) continue;
+
+			var info = ..io.splitpath(e.to);
+			f.path = e.to;
+			f.name = info.file;
+			f.dir = info.dir;
+			break;
+		}
+	}
+
+	//重建去重键：撤销后路径变了，旧键会把同一个文件误判成重复
+	fileKeys = {};
+	for(i=1;#realFiles;1){
+		fileKeys[[ ..frename.filescan.pathKey(realFiles[i].path) ]] = true;
+	}
+}
+
+//执行重命名。
+//流程固定为：validate.check -> 用户确认 -> executor.executePlan -> history.addSession，
+//任何一步不通过都不会真的动文件。
+var executeRename = function(){
+	//异步执行期间禁止重复点击，也禁用撤销按钮，避免并发改动文件
+	if(isBusy) return;
+	isBusy = true;
+	winform.btnExecute.enabled = false;
+	winform.btnUndo.enabled = false;
+
+	//所有提前退出都只离开 doExecute，外层的 isBusy / 按钮复位一定会被执行
+	var doExecute = function(){
+		//1. 必须先加载真实文件（模拟数据没有真实路径，不能执行）
+		if(!#realFiles){
+			setStatus("请先加载文件或文件夹");
+			winform.msgbox('还没有加载任何文件。\r\n请先点「加载文件」或「加载文件夹」。',"无法执行",0);
+			return;
+		}
+
+		//2. 用当前规则算出目标名称，生成两阶段计划
+		var fs = frename.fileadapter.createWindowsFs();
+		var res;
+		try{
+			res = frename.preview(buildPreviewFiles(), rules, time());
+		}
+		catch(e){
+			setStatus("预览失败（引擎异常，界面未崩溃）：" ++ tostring(e));
+			return;
+		}
+
+		var plan = frename.renameplan.build(buildItems(res,true), fs.existsFunc);
+
+		//3. 校验（不允许绕过）
+		var vr = frename.validate.check(plan, fs.existsFunc);
+
+		if(!vr.ok){
+			var msg = '校验未通过，不能执行：\r\n\r\n';
+			for(i=1;#vr.errors;1){
+				msg = msg ++ "· " ++ tostring(vr.errors[i].reason) ++ '\r\n';
+			}
+			winform.msgbox(msg,"校验未通过",0);
+			setStatus("校验未通过：错误 " ++ #vr.errors ++ " 条，未执行任何操作");
+			return;
+		}
+
+		//4. 用户确认
+		var confirmMsg = "即将重命名 " ++ #plan.operations ++ " 个文件。";
+		if(#vr.warnings) confirmMsg = confirmMsg ++ '\r\n注意：有 ' ++ #vr.warnings ++ " 条警告。";
+		if(#plan.blocked) confirmMsg = confirmMsg ++ '\r\n有 ' ++ #plan.blocked ++ " 项不执行。";
+		confirmMsg = confirmMsg ++ '\r\n\r\n确定执行吗？';
+
+		if(winform.msgbox(confirmMsg,"确认执行重命名",1) != 1){
+			setStatus("已取消执行");
+			return;
+		}
+
+		//5. 执行放进后台线程，UI 线程不卡（thread.invokeAndWait 等待时仍处理界面消息）。
+		//   plan 是纯数据表，按 aardio 的线程间序列化传值；fs 在后线程里 import 创建，
+		//   函数不走序列化。执行期间用户仍可拖动窗口、操作界面。
+		setStatus("正在执行重命名，请稍候…");
+		winform.lblStatus.update();
+
+		var execRes, execErr;
+		try{
+			execRes = thread.invokeAndWait(
+				function(plan){
+					import frename.fileadapter;
+					import frename.executor;
+					var fs = frename.fileadapter.createWindowsFs();
+					return frename.executor.executePlan(plan, fs);
+				},
+				plan
+			);
+		}
+		catch(e){
+			execErr = tostring(e);
+		}
+
+		if(execErr){
+			setStatus("执行过程异常：" ++ execErr);
+			winform.msgbox("执行过程出现异常：\r\n\r\n" ++ execErr,"执行结果",0);
+			return;
+		}
+
+		//6. 记入历史（UI 线程）
+		var session = opHistory.addSession(execRes, "手动执行重命名");
+
+		//7. 全部成功才把列表同步到新文件名
+		if(execRes.success){
+			syncFilesBySteps(execRes.executed);
+		}
+
+		refreshPreview();
+
+		//8. 结果：成功数 / 失败数 / 是否可撤销
+		var undoText = "不可撤销";
+		if(session && session.undoable) undoText = "可撤销";
+
+		if(execRes.success){
+			setStatus("执行成功：成功 " ++ #plan.operations ++ " 个文件，未执行 " ++ #plan.blocked ++ " 项，" ++ undoText);
+			winform.msgbox("执行成功。" ++ '\r\n\r\n成功步骤：' ++ #execRes.executed
+				++ '\r\n失败步骤：0'
+				++ '\r\n未执行项：' ++ #plan.blocked
+				++ '\r\n是否可撤销：' ++ undoText,"执行结果",0);
+		}
+		else {
+			setStatus("执行失败：" ++ execRes.message);
+			winform.msgbox("执行失败。" ++ '\r\n\r\n成功步骤：' ++ #execRes.executed
+				++ '\r\n失败步骤：1'
+				++ '\r\n失败原因：' ++ execRes.failedStep.reason
+				++ '\r\n已自动恢复：' ++ (execRes.rollbackOk ? "是" : "否")
+				++ '\r\n是否可撤销：' ++ undoText,"执行结果",0);
+		}
+	};
+
+	doExecute();
+
+	isBusy = false;
+	winform.btnExecute.enabled = true;
+	winform.btnUndo.enabled = true;
+}
+
+//撤销上一次可撤销的操作。
+//必须通过 history.getLastUndoable 取会话；撤销完成后调 markUndone。
+var undoLast = function(){
+	if(isBusy) return;
+	isBusy = true;
+	winform.btnExecute.enabled = false;
+	winform.btnUndo.enabled = false;
+
+	var doUndo = function(){
+		var session = opHistory.getLastUndoable();
+
+		if(!session){
+			setStatus("没有可撤销的操作");
+			winform.msgbox("当前没有可撤销的操作。","无法撤销",0);
+			return;
+		}
+
+		if(winform.msgbox('将撤销该次操作。\r\n\r\n' ++ session.message ++ '\r\n\r\n确定撤销吗？',"确认撤销",1) != 1){
+			setStatus("已取消撤销");
+			return;
+		}
+
+		//撤销也放进后台线程，UI 不卡
+		setStatus("正在撤销，请稍候…");
+		winform.lblStatus.update();
+
+		var rb, rbErr;
+		try{
+			rb = thread.invokeAndWait(
+				function(log){
+					import frename.fileadapter;
+					import frename.executor;
+					var fs = frename.fileadapter.createWindowsFs();
+					return frename.executor.rollback(log, fs);
+				},
+				session.executionLog
+			);
+		}
+		catch(e){
+			rbErr = tostring(e);
+		}
+
+		if(rbErr){
+			setStatus("撤销过程异常：" ++ rbErr);
+			winform.msgbox("撤销过程出现异常：\r\n\r\n" ++ rbErr,"撤销结果",0);
+			return;
+		}
+
+		if(!rb.ok){
+			//部分失败：如实报告，并标记为已撤销，避免反复尝试同一批次
+			opHistory.markUndone(session.id);
+			refreshPreview();
+			setStatus("撤销未完全成功：失败 " ++ #rb.failed ++ " 步");
+			winform.msgbox("撤销未完全成功，失败 " ++ #rb.failed ++ ' 步。\r\n请手动检查文件状态。',"撤销结果",0);
+			return;
+		}
+
+		//撤销成功：标记 + 把文件列表同步回原名
+		opHistory.markUndone(session.id);
+
+		var undoSteps = {};
+		for(i=#session.executionLog;i>=1;i--){
+			var e = session.executionLog[i];
+			table.push(undoSteps,{ from = e.to; to = e.from });
+		}
+		syncFilesBySteps(undoSteps);
+
+		refreshPreview();
+
+		setStatus("撤销成功：已恢复 " ++ rb.doneCount ++ " 步");
+		winform.msgbox("撤销成功，已恢复 " ++ rb.doneCount ++ " 步。","撤销结果",0);
+	};
+
+	doUndo();
+
+	isBusy = false;
+	winform.btnExecute.enabled = true;
+	winform.btnUndo.enabled = true;
 }
 
 //---------- 操作 ----------
@@ -904,6 +1168,14 @@ winform.btnClearFiles.oncommand = function(id,event){
 	fileKeys = {};
 	refreshPreview();
 	setStatus("已清空文件列表，恢复为内存模拟数据预览");
+}
+
+winform.btnExecute.oncommand = function(id,event){
+	executeRename();
+}
+
+winform.btnUndo.oncommand = function(id,event){
+	undoLast();
 }
 
 //双击预览行：在状态栏显示该行完整路径，避免列宽不够看不全
