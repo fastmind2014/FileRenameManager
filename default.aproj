@@ -11,6 +11,7 @@
 		<file name="historyTest.aardio" path="tests\historyTest.aardio" comment="tests\historyTest.aardio"/>
 		<file name="renamePlanTest.aardio" path="tests\renamePlanTest.aardio" comment="tests\renamePlanTest.aardio"/>
 		<file name="ruleEngineTest.aardio" path="tests\ruleEngineTest.aardio" comment="tests\ruleEngineTest.aardio"/>
+		<file name="validateTest.aardio" path="tests\validateTest.aardio" comment="tests\validateTest.aardio"/>
 		<folder name="reference" path="tests\reference" comment="tests\reference">
 			<file name="go-baseline.txt" path="tests\reference\go-baseline.txt" comment="tests\reference\go-baseline.txt"/>
 		</folder>
