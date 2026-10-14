@@ -15,6 +15,7 @@
 
 import frename.filescan;
 import frename.precheck;
+import frename.i18n;
 
 namespace frename.validate{
 
@@ -43,7 +44,7 @@ namespace frename.validate{
 		if(type(plan) != "table" || type(plan.operations) != "table"){
 			..table.push(errors,{
 				index = 0; sourcePath = ""; targetPath = "";
-				reason = "计划为空或没有可执行的操作";
+				reason = ..frename.i18n.t("validate.emptyPlan");
 			});
 			return result;
 		}
@@ -89,7 +90,7 @@ namespace frename.validate{
 			//---------- 1. 空路径 ----------
 			if(!#srcText || !#dstText || !#sk || !#tk){
 				..table.push(errors, ..table.assign(item,{
-					reason = "源路径或目标路径为空";
+					reason = ..frename.i18n.t("validate.emptyPath");
 				}));
 				continue;		//空路径时其它检查都无从谈起
 			}
@@ -100,7 +101,7 @@ namespace frename.validate{
 
 			if(!#targetName){
 				..table.push(errors, ..table.assign(item,{
-					reason = "目标文件名为空";
+					reason = ..frename.i18n.t("validate.emptyTargetName");
 				}));
 			}
 			else {
@@ -121,12 +122,12 @@ namespace frename.validate{
 			if(sameKey){
 				if(srcText == dstText){
 					..table.push(errors, ..table.assign(item,{
-						reason = "源路径与目标路径完全相同，无需执行";
+						reason = ..frename.i18n.t("validate.samePath");
 					}));
 				}
 				else {
 					..table.push(warnings, ..table.assign(item,{
-						reason = "目标与源仅大小写不同，Windows 文件系统不区分大小写，可能不生效";
+						reason = ..frename.i18n.t("validate.onlyCase");
 					}));
 				}
 			}
@@ -134,14 +135,14 @@ namespace frename.validate{
 			//---------- 5. 源路径重复 ----------
 			if((sourceCount[[sk]] : 0) > 1){
 				..table.push(errors, ..table.assign(item,{
-					reason = "源路径在计划中重复出现";
+					reason = ..frename.i18n.t("validate.dupSource");
 				}));
 			}
 
 			//---------- 6. 重复目标路径 ----------
 			if((targetCount[[tk]] : 0) > 1){
 				..table.push(errors, ..table.assign(item,{
-					reason = "多个操作生成了相同的目标路径";
+					reason = ..frename.i18n.t("validate.dupTarget");
 				}));
 			}
 
@@ -157,7 +158,7 @@ namespace frename.validate{
 					//检查本身出错不当成错误，但要留下警告，避免 silently 放过
 					exists = false;
 					..table.push(warnings, ..table.assign(item,{
-						reason = "检查目标是否已存在时出错：" ++ tostring(e);
+						reason = ..frename.i18n.t("validate.existsErr", tostring(e));
 					}));
 				}
 
@@ -168,13 +169,13 @@ namespace frename.validate{
 						//被本批次其它源文件占用：A→B、B→C 这类链式情形，
 						//两阶段执行正是为它设计的，所以只是警告
 						..table.push(warnings, ..table.assign(item,{
-							reason = "目标被本批次其它待处理文件占用（链式重命名，两阶段执行可处理）";
+							reason = ..frename.i18n.t("validate.chainOccupied");
 						}));
 					}
 					else {
 						//被本批次之外的文件占用：真实冲突
 						..table.push(errors, ..table.assign(item,{
-							reason = "目标路径已被本批次之外的文件占用";
+							reason = ..frename.i18n.t("validate.outsideOccupied");
 						}));
 					}
 				}

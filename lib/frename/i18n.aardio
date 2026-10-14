@@ -1,0 +1,658 @@
+// frename.i18n —— 界面文案国际化（纯数据 + 取值函数）
+//
+// 职责：集中存放主窗口用到的全部界面文案，按语言分表，
+// 提供 t(key,...) 取值。本模块不接触文件系统，也不参与任何重命名逻辑。
+//
+// 设计：
+//   1. 默认语言为 English（current = "en"）。
+//   2. 文案按「点号分组」命名，例如 "btn.execute"、"msg.exec.confirm"。
+//   3. t() 支持 {1} {2} … 占位符，按传入参数顺序替换，
+//      这样带变量的句子也能保持各语言自己的语序。
+//   4. 取不到 key 时返回 key 本身 —— 界面上会直接显示出漏翻的 key，
+//      便于发现遗漏，而不会显示成空白。
+//
+// 注意：本模块只服务界面层（dlg/mainForm.aardio）。
+// lib/frename/ 下其余模块返回的原因文本属于引擎输出，不在本模块范围内，
+// 以保证 go-baseline 行为对齐测试不受影响。
+
+namespace frename.i18n{
+
+	//当前语言；改成 "zh" 即可切回中文
+	current = "en";
+
+	//支持的全部语言代码
+	LANGS = { "en"; "zh" };
+
+	//---------- 英文（默认） ----------
+
+	STRINGS = {
+	en = {
+		//窗体与控件
+		["app.title"] = "FileRenameManager - Rules & Preview";
+		["lbl.rules"] = "Rules (applied top to bottom)";
+		["lbl.params"] = "Rule parameters:";
+		["lbl.preview"] = "Preview (in-memory sample data when no files loaded)";
+		["lbl.status.ready"] = "Ready";
+		["chk.enabled"] = "Enable current rule";
+
+		["btn.add"] = "Add Rule";
+		["btn.up"] = "Move Up";
+		["btn.down"] = "Move Down";
+		["btn.delete"] = "Delete";
+		["btn.loadFiles"] = "Load Files";
+		["btn.loadDir"] = "Load Folder";
+		["btn.clearFiles"] = "Clear File List";
+		["btn.execute"] = "Execute Rename";
+		["btn.undo"] = "Undo Last Operation";
+
+		//列表列名
+		["col.rules.no"] = "#";
+		["col.rules.type"] = "Type";
+		["col.rules.desc"] = "Description";
+		["col.rules.status"] = "Status";
+
+		["col.prev.orig"] = "Original";
+		["col.prev.target"] = "Target";
+		["col.prev.status"] = "Status";
+		["col.prev.note"] = "Note / Error";
+		["col.prev.srcPath"] = "Source Full Path";
+		["col.prev.dstPath"] = "Target Full Path";
+
+		//规则类型
+		["rule.add_text"] = "Add Text";
+		["rule.replace"] = "Replace Text";
+		["rule.regex_replace"] = "Regex Replace";
+		["rule.case_convert"] = "Case Convert";
+		["rule.sequence"] = "Number Sequence";
+		["rule.date_time"] = "Date Time";
+
+		//规则说明（规则列表「说明」列，由 frename.rules.description 生成）
+		["rule.desc.addPrefix"] = "Prefix add: {1}";
+		["rule.desc.addSuffix"] = "Suffix add: {1}";
+		["rule.desc.addAtPos"] = "Position {1} add: {2}";
+		["rule.desc.addText"] = "Add text: {1}";
+		["rule.desc.replaceScoped"] = "Replace text[{1}]: → {2}";
+		["rule.desc.replace"] = "Replace text: {1} → {2} {3}";
+		["rule.desc.ignoreCase"] = "(ignore case)";
+		["rule.desc.regex"] = "Regex replace: {1} → {2}";
+		["rule.desc.caseConvert"] = "Case convert: {1}";
+		["rule.desc.seq"] = "Number sequence: start {1}, step {2}, digits {3}, position {4}";
+		["rule.desc.dateTime"] = "Date time: {1}, position {2}, {3}";
+		["rule.desc.timeNow"] = "Current time";
+		["rule.desc.timeFile"] = "File modified time";
+
+		//替换范围说明（拼进规则说明里）
+		["rule.scope.first_n"] = "First {1} chars";
+		["rule.scope.last_n"] = "Last {1} chars";
+		["rule.scope.after_pos"] = "{2} chars from position {1}";
+		["rule.scope.after_char"] = "After '{1}'";
+		["rule.scope.before_char"] = "Before '{1}'";
+		["rule.scope.after_char_n"] = "{2} chars after '{1}'";
+		["rule.scope.before_char_n"] = "{2} chars before '{1}'";
+
+		//规则错误
+		["rule.err.invalidRegex"] = "Invalid regular expression: {1}";
+		["rule.err.applyFailed"] = "Rule {1} failed: {2}";
+
+		//预检（frename.precheck）
+		["check.emptyName"] = "Target filename is empty";
+		["check.invalidChar"] = "Target filename contains a disallowed character: {1}";
+		["check.trailingSpace"] = "Target filename must not end with a space";
+		["check.trailingDot"] = "Target filename must not end with a dot";
+		["check.reservedName"] = "Target filename uses a Windows reserved name: {1}";
+		["check.ruleFailed"] = "Rule evaluation failed: {1}";
+		["check.onlyCase"] = "Differs from another target path only in letter case; Windows treats them as the same file";
+		["check.dupTarget"] = "Multiple files resolve to the same target path";
+		["check.selfCase"] = "Only the letter case changed; the Windows file system is case-insensitive, an intermediate step may be needed";
+		["check.chainOccupied"] = "Target is occupied by another file in this batch (chained rename; success depends on order)";
+		["check.outsideOccupied"] = "Target path is occupied by a file outside this batch";
+
+		//计划校验（frename.validate）
+		["validate.emptyPlan"] = "The plan is empty or has no executable operations";
+		["validate.emptyPath"] = "Source or target path is empty";
+		["validate.emptyTargetName"] = "Target filename is empty";
+		["validate.samePath"] = "Source and target paths are identical, nothing to execute";
+		["validate.onlyCase"] = "Target differs from source only in letter case; the Windows file system is case-insensitive and it may not take effect";
+		["validate.dupSource"] = "Source path appears more than once in the plan";
+		["validate.dupTarget"] = "Multiple operations resolve to the same target path";
+		["validate.existsErr"] = "Error while checking whether the target exists: {1}";
+		["validate.chainOccupied"] = "Target is occupied by another file in this batch (chained rename; two-phase execution handles it)";
+		["validate.outsideOccupied"] = "Target path is occupied by a file outside this batch";
+
+		//执行与撤销（frename.executor）
+		["exec.emptyPlan"] = "The plan is empty or has no executable steps";
+		["exec.successMsg"] = "Executed successfully, {1} step(s) in total";
+		["exec.srcMissing"] = "Source file does not exist: {1}";
+		["exec.dstOccupied"] = "Target path is already in use: {1}";
+		["exec.moveFailed"] = "Move failed: {1} → {2}";
+		["exec.failMsg"] = "Execution failed (phase {1}): {2}";
+		["exec.restored"] = "; restored to the pre-execution state automatically";
+		["exec.restorePartial"] = "; automatic restore did not fully succeed, {1} step(s) failed";
+		["exec.undoDeleteFail"] = "Cannot delete the existing path while undoing: {1}";
+		["exec.undoMoveFail"] = "Undo move failed: {1} → {2}";
+
+		//计划生成（frename.renameplan）
+		["plan.unchanged"] = "Name unchanged, nothing to execute";
+		["plan.tempFailed"] = "Unable to generate a non-conflicting temp filename";
+		["plan.simSrcMissing"] = "Source file does not exist (it may have been moved or deleted)";
+		["plan.simDstOccupied"] = "Target path is already in use";
+		["plan.logLine"] = "Phase {1}: {2}  →  {3}";
+
+		//文件系统适配层（frename.fileadapter）
+		["adapter.emptyPath"] = "Path is empty or not a string";
+		["adapter.existErr"] = "Error while checking whether the path exists: {1}";
+		["adapter.emptySrc"] = "Source path is empty or not a string";
+		["adapter.emptyDst"] = "Target path is empty or not a string";
+		["adapter.checkSrcErr"] = "Error while checking the source path: {1}";
+		["adapter.srcMissing"] = "Source file does not exist: {1}";
+		["adapter.checkDstErr"] = "Error while checking the target path: {1}";
+		["adapter.dstExists"] = "Target path already exists, will not overwrite: {1}";
+		["adapter.moveErr"] = "Error while moving the file: {1}";
+		["adapter.moveFailed"] = "Move failed (insufficient permission, or the file is in use by another program): {1} → {2}";
+		["adapter.delMissing"] = "The file to delete does not exist: {1}";
+		["adapter.checkDelErr"] = "Error while checking the path: {1}";
+		["adapter.delFailed"] = "Delete failed (insufficient permission, or the file is in use by another program): {1}";
+		["adapter.deleteErr"] = "Error while deleting the file: {1}";
+
+		//文件扫描（frename.filescan）
+		["scan.badPath"] = "Cannot parse the path";
+		["scan.noFile"] = "No filename in the path";
+		["scan.emptyPath"] = "Path is empty";
+		["scan.missing"] = "File does not exist or cannot be accessed";
+		["scan.readErr"] = "Cannot read file information";
+		["scan.dirFailed"] = "Cannot read the directory (it may not exist, or you lack permission)";
+
+		//参数面板：add_text
+		["sch.add_text.text"] = "Text to add";
+		["sch.add_text.position"] = "Position";
+		["sch.add_text.pos.prefix"] = "Prefix";
+		["sch.add_text.pos.suffix"] = "Suffix";
+		["sch.add_text.pos.custom"] = "Custom position";
+		["sch.add_text.customPos"] = "Custom position (before N-th char)";
+
+		//参数面板：replace
+		["sch.replace.scope"] = "Replace scope";
+		["sch.replace.scope.all"] = "Find text";
+		["sch.replace.scope.first_n"] = "First N chars";
+		["sch.replace.scope.last_n"] = "Last N chars";
+		["sch.replace.scope.after_pos"] = "N chars from position";
+		["sch.replace.scope.after_char"] = "After specified char";
+		["sch.replace.scope.before_char"] = "Before specified char";
+		["sch.replace.scope.after_char_n"] = "N chars after specified char";
+		["sch.replace.scope.before_char_n"] = "N chars before specified char";
+		["sch.replace.oldText"] = "Find text";
+		["sch.replace.caseSensitive"] = "Case sensitive";
+		["sch.replace.scopeParam1"] = "N (chars)";
+		["sch.replace.scopeParam2"] = "Position / char";
+		["sch.replace.newText"] = "Replace with";
+
+		//参数面板：regex_replace
+		["sch.regex.preset"] = "Common regex";
+		["sch.regex.preset.custom"] = "(Custom)";
+		["sch.regex.preset.digits"] = "Digits";
+		["sch.regex.preset.nondigits"] = "Non-digits";
+		["sch.regex.preset.letters"] = "Letters";
+		["sch.regex.preset.chinese"] = "Chinese chars";
+		["sch.regex.preset.space"] = "Whitespace";
+		["sch.regex.preset.date8"] = "8-digit date";
+		["sch.regex.preset.dateDash"] = "YYYY-MM-DD";
+		["sch.regex.preset.inParen"] = "Inside parentheses";
+		["sch.regex.preset.inBracket"] = "Inside brackets";
+		["sch.regex.preset.trailDigits"] = "Trailing digits";
+		["sch.regex.pattern"] = "Regular expression";
+		["sch.regex.replacement"] = "Replace with";
+		["sch.regex.caseSensitive"] = "Case sensitive";
+
+		//参数面板：case_convert
+		["sch.case.type"] = "Conversion";
+		["sch.case.upper"] = "UPPER CASE";
+		["sch.case.lower"] = "lower case";
+		["sch.case.first"] = "First letter upper";
+		["sch.case.title"] = "Title Case";
+
+		//参数面板：sequence
+		["sch.seq.start"] = "Start";
+		["sch.seq.step"] = "Step";
+		["sch.seq.digits"] = "Digits (zero pad)";
+		["sch.seq.position"] = "Position";
+		["sch.seq.pos.end"] = "End";
+		["sch.seq.pos.start"] = "Start";
+
+		//参数面板：date_time
+		["sch.date.format"] = "Format";
+		["sch.date.position"] = "Position";
+		["sch.date.pos.end"] = "End";
+		["sch.date.pos.start"] = "Start";
+		["sch.date.useFileTime"] = "Use file modified time";
+
+		//通用取值
+		["bool.no"] = "No";
+		["bool.yes"] = "Yes";
+		["ruleState.enabled"] = "Enabled";
+		["ruleState.disabled"] = "Disabled";
+
+		//预览状态列
+		["status.error"] = "Error";
+		["status.warning"] = "Risky";
+		["status.ok"] = "Ready";
+		["status.changed"] = "Changed";
+		["status.unchanged"] = "Unchanged";
+		["lv.readFailed"] = "(Read failed)";
+
+		//状态栏统计
+		["stat.rules"] = "{1} rule(s) ({2} enabled)";
+		["stat.real"] = " ｜ {1} real file(s): {2} ready, {3} unchanged, {4} risky ({5} error / {6} warning) ｜ re-check before execution";
+		["stat.mock"] = " ｜ sample preview {1} item(s): {2} changed, {3} unchanged, {4} error";
+
+		//预览
+		["preview.failEngine"] = "Preview failed (engine error, UI alive): {1}";
+		["preview.failEmpty"] = "Preview failed: engine returned no result";
+
+		//执行
+		["exec.needFiles"] = "Load files or folders first";
+		["exec.needFilesBox"] = 'No files loaded yet.\r\nPlease click "Load Files" or "Load Folder" first.';
+		["exec.validateHead"] = 'Validation failed, cannot execute:\r\n\r\n';
+		["exec.validateStatus"] = "Validation failed: {1} error(s), nothing executed";
+		["exec.confirm"] = "About to rename {1} file(s).";
+		["exec.confirmWarn"] = '\r\nNote: {1} warning(s).';
+		["exec.confirmBlocked"] = '\r\n{1} item(s) will be skipped.';
+		["exec.confirmAsk"] = '\r\n\r\nProceed?';
+		["exec.cancelled"] = "Execution cancelled";
+		["exec.running"] = "Renaming, please wait…";
+		["exec.errorStatus"] = "Execution error: {1}";
+		["exec.errorBox"] = 'An error occurred during execution:\r\n\r\n{1}';
+		["exec.successStatus"] = "Success: renamed {1} file(s), skipped {2} item(s), {3}";
+		["exec.successBox"] = 'Rename succeeded.\r\n\r\nSteps succeeded: {1}\r\nSteps failed: 0\r\nItems skipped: {2}\r\nUndoable: {3}';
+		["exec.failStatus"] = "Execution failed: {1}";
+		["exec.failBox"] = 'Rename failed.\r\n\r\nSteps succeeded: {1}\r\nSteps failed: 1\r\nReason: {2}\r\nAuto-restored: {3}\r\nUndoable: {4}';
+
+		//撤销
+		["undo.undoable"] = "Undoable";
+		["undo.notUndoable"] = "Not undoable";
+		["undo.none"] = "Nothing to undo";
+		["undo.noneBox"] = "There is nothing to undo right now.";
+		["undo.confirm"] = 'This will undo the last operation.\r\n\r\n{1}\r\n\r\nProceed?';
+		["undo.cancelled"] = "Undo cancelled";
+		["undo.running"] = "Undoing, please wait…";
+		["undo.errorStatus"] = "Undo error: {1}";
+		["undo.errorBox"] = 'An error occurred during undo:\r\n\r\n{1}';
+		["undo.partialStatus"] = "Undo partially failed: {1} step(s) failed";
+		["undo.partialBox"] = 'Undo did not fully succeed, {1} step(s) failed.\r\nPlease check the file state manually.';
+		["undo.okStatus"] = "Undo succeeded: {1} step(s) restored";
+		["undo.okBox"] = "Undo succeeded, {1} step(s) restored.";
+
+		//规则操作
+		["rule.added"] = "Rule added: {1}";
+		["rule.selectFirst"] = "Select a rule first";
+		["rule.deleted"] = "Rule deleted: {1}";
+		["rule.atBoundary"] = "Already at the boundary, cannot move further";
+		["rule.moved"] = "Rule moved, now at position {1}";
+
+		//文件加载
+		["files.cleared"] = "File list cleared, back to in-memory sample preview";
+		["files.filter"] = "All Files|*.*|";
+		["files.pickTitle"] = "Select files to rename (multi-select)";
+		["dirs.pickTitle"] = "Select folders (multi-select, only direct child files, no recursion)";
+		["files.selectedFiles"] = "Selected {1} file(s)";
+		["files.selectedDirs"] = "Selected {1} folder(s) (direct child files only, no recursion)";
+		["scan.summary"] = "{1}: added {2}, total {3}";
+		["scan.dup"] = ", {1} duplicate(s) skipped";
+		["scan.failed"] = ", {1} failed";
+
+		//双击预览行
+		["preview.dblclick"] = "Source: {1}  →  Target: {2}";
+
+		//操作历史备注
+		["hist.manualRename"] = "Manual rename execution";
+
+		//对话框标题
+		["dlg.cannotExecute"] = "Cannot Execute";
+		["dlg.validationFailed"] = "Validation Failed";
+		["dlg.confirmRename"] = "Confirm Rename";
+		["dlg.execResult"] = "Execution Result";
+		["dlg.cannotUndo"] = "Cannot Undo";
+		["dlg.confirmUndo"] = "Confirm Undo";
+		["dlg.undoResult"] = "Undo Result";
+
+		//左下说明区
+		["hint.title"] = "Notes:";
+		["hint.1"] = "This tool only scans and pre-checks; it never modifies, moves or renames real files.";
+		["hint.2"] = "Uses in-memory sample data when no files are loaded.";
+		["hint.3"] = "Folders are scanned for direct child files only, no recursion.";
+		["hint.4"] = "Pre-check results are advisory; re-check before executing.";
+		["hint.5"] = "Double-click a preview row to see its full path in the status bar.";
+		["hint.6"] = "Sample data: {1}";
+		["hint.6b"] = "(Sample preview uses fixed time {1}).";
+	};
+
+	//---------- 中文 ----------
+
+	zh = {
+		["app.title"] = "FileRenameManager - 规则编辑与预览";
+		["lbl.rules"] = "规则列表（自上而下依次应用）";
+		["lbl.params"] = "规则参数：";
+		["lbl.preview"] = "预览（未加载真实文件时为内存模拟数据）";
+		["lbl.status.ready"] = "就绪";
+		["chk.enabled"] = "启用当前规则";
+
+		["btn.add"] = "添加规则";
+		["btn.up"] = "上移";
+		["btn.down"] = "下移";
+		["btn.delete"] = "删除";
+		["btn.loadFiles"] = "加载文件";
+		["btn.loadDir"] = "加载文件夹";
+		["btn.clearFiles"] = "清空文件列表";
+		["btn.execute"] = "执行重命名";
+		["btn.undo"] = "撤销上一次操作";
+
+		["col.rules.no"] = "#";
+		["col.rules.type"] = "类型";
+		["col.rules.desc"] = "说明";
+		["col.rules.status"] = "状态";
+
+		["col.prev.orig"] = "原名称";
+		["col.prev.target"] = "目标名称";
+		["col.prev.status"] = "状态";
+		["col.prev.note"] = "说明 / 错误";
+		["col.prev.srcPath"] = "原始完整路径";
+		["col.prev.dstPath"] = "目标完整路径";
+
+		["rule.add_text"] = "添加字符";
+		["rule.replace"] = "文本替换";
+		["rule.regex_replace"] = "正则替换";
+		["rule.case_convert"] = "大小写转换";
+		["rule.sequence"] = "数字序列";
+		["rule.date_time"] = "日期时间";
+
+		//规则说明：中文与旧版 Go 的 Description() 逐字一致，
+		//tests/reference/go-baseline.txt 里的基线就是这些文本，不要随意改动
+		["rule.desc.addPrefix"] = "前缀添加: {1}";
+		["rule.desc.addSuffix"] = "后缀添加: {1}";
+		["rule.desc.addAtPos"] = "位置{1}添加: {2}";
+		["rule.desc.addText"] = "添加字符: {1}";
+		["rule.desc.replaceScoped"] = "文本替换[{1}]: → {2}";
+		["rule.desc.replace"] = "文本替换: {1} → {2} {3}";
+		["rule.desc.ignoreCase"] = "(忽略大小写)";
+		["rule.desc.regex"] = "正则替换: {1} → {2}";
+		["rule.desc.caseConvert"] = "大小写转换: {1}";
+		["rule.desc.seq"] = "数字序列: 起始{1}, 步长{2}, 位数{3}, 位置{4}";
+		["rule.desc.dateTime"] = "日期时间: {1}, 位置{2}, {3}";
+		["rule.desc.timeNow"] = "当前时间";
+		["rule.desc.timeFile"] = "文件修改时间";
+
+		["rule.scope.first_n"] = "前 {1} 个字符";
+		["rule.scope.last_n"] = "后 {1} 个字符";
+		["rule.scope.after_pos"] = "第 {1} 位起 {2} 个字符";
+		["rule.scope.after_char"] = "'{1}' 之后";
+		["rule.scope.before_char"] = "'{1}' 之前";
+		["rule.scope.after_char_n"] = "'{1}' 之后 {2} 个";
+		["rule.scope.before_char_n"] = "'{1}' 之前 {2} 个";
+
+		["rule.err.invalidRegex"] = "无效的正则表达式: {1}";
+		["rule.err.applyFailed"] = "规则 {1} 应用失败: {2}";
+
+		//以下中文与这些模块的原有文案逐字一致，供测试断言使用
+		["check.emptyName"] = "目标文件名为空";
+		["check.invalidChar"] = "目标文件名包含不允许的字符：{1}";
+		["check.trailingSpace"] = "目标文件名不能以空格结尾";
+		["check.trailingDot"] = "目标文件名不能以点结尾";
+		["check.reservedName"] = "目标文件名使用了 Windows 保留名：{1}";
+		["check.ruleFailed"] = "规则计算失败：{1}";
+		["check.onlyCase"] = "与其它目标路径仅大小写不同，Windows 下视为同一个文件";
+		["check.dupTarget"] = "多个文件生成了相同的目标路径";
+		["check.selfCase"] = "仅文件名大小写变化，Windows 文件系统不区分大小写，可能需要中间步骤";
+		["check.chainOccupied"] = "目标被本批次待处理文件占用（链式重命名，能否成功取决于执行顺序）";
+		["check.outsideOccupied"] = "目标路径已被本批次之外的文件占用";
+
+		["validate.emptyPlan"] = "计划为空或没有可执行的操作";
+		["validate.emptyPath"] = "源路径或目标路径为空";
+		["validate.emptyTargetName"] = "目标文件名为空";
+		["validate.samePath"] = "源路径与目标路径完全相同，无需执行";
+		["validate.onlyCase"] = "目标与源仅大小写不同，Windows 文件系统不区分大小写，可能不生效";
+		["validate.dupSource"] = "源路径在计划中重复出现";
+		["validate.dupTarget"] = "多个操作生成了相同的目标路径";
+		["validate.existsErr"] = "检查目标是否已存在时出错：{1}";
+		["validate.chainOccupied"] = "目标被本批次其它待处理文件占用（链式重命名，两阶段执行可处理）";
+		["validate.outsideOccupied"] = "目标路径已被本批次之外的文件占用";
+
+		["exec.emptyPlan"] = "计划为空或没有可执行步骤";
+		["exec.successMsg"] = "执行成功，共 {1} 步";
+		["exec.srcMissing"] = "来源文件不存在：{1}";
+		["exec.dstOccupied"] = "目标路径已被占用：{1}";
+		["exec.moveFailed"] = "移动失败：{1} → {2}";
+		["exec.failMsg"] = "执行失败（阶段 {1}）：{2}";
+		["exec.restored"] = "；已自动恢复到执行前状态";
+		["exec.restorePartial"] = "；自动恢复未完全成功，失败 {1} 步";
+		["exec.undoDeleteFail"] = "撤销时无法删除已存在的路径：{1}";
+		["exec.undoMoveFail"] = "撤销移动失败：{1} → {2}";
+
+		["plan.unchanged"] = "名称未变化，无需执行";
+		["plan.tempFailed"] = "无法生成不冲突的临时文件名";
+		["plan.simSrcMissing"] = "来源文件不存在（可能已被移动或删除）";
+		["plan.simDstOccupied"] = "目标路径已被占用";
+		["plan.logLine"] = "阶段{1}：{2}  →  {3}";
+
+		["adapter.emptyPath"] = "路径为空或不是字符串";
+		["adapter.existErr"] = "判断路径是否存在时出错：{1}";
+		["adapter.emptySrc"] = "源路径为空或不是字符串";
+		["adapter.emptyDst"] = "目标路径为空或不是字符串";
+		["adapter.checkSrcErr"] = "检查源路径时出错：{1}";
+		["adapter.srcMissing"] = "源文件不存在：{1}";
+		["adapter.checkDstErr"] = "检查目标路径时出错：{1}";
+		["adapter.dstExists"] = "目标路径已存在，不覆盖：{1}";
+		["adapter.moveErr"] = "移动文件时出错：{1}";
+		["adapter.moveFailed"] = "移动文件失败（可能没有权限或文件被其它程序占用）：{1} → {2}";
+		["adapter.delMissing"] = "要删除的文件不存在：{1}";
+		["adapter.checkDelErr"] = "检查路径时出错：{1}";
+		["adapter.delFailed"] = "删除文件失败（可能没有权限或文件被其它程序占用）：{1}";
+		["adapter.deleteErr"] = "删除文件时出错：{1}";
+
+		["scan.badPath"] = "路径无法解析";
+		["scan.noFile"] = "路径中没有文件名";
+		["scan.emptyPath"] = "路径为空";
+		["scan.missing"] = "文件不存在或无法访问";
+		["scan.readErr"] = "无法读取文件信息";
+		["scan.dirFailed"] = "无法读取该目录（可能不存在或没有访问权限）";
+
+		["sch.add_text.text"] = "添加的文本";
+		["sch.add_text.position"] = "添加位置";
+		["sch.add_text.pos.prefix"] = "前缀";
+		["sch.add_text.pos.suffix"] = "后缀";
+		["sch.add_text.pos.custom"] = "指定位置";
+		["sch.add_text.customPos"] = "指定位置（第几字前）";
+
+		["sch.replace.scope"] = "替换范围";
+		["sch.replace.scope.all"] = "查找文本";
+		["sch.replace.scope.first_n"] = "前 N 个字符";
+		["sch.replace.scope.last_n"] = "后 N 个字符";
+		["sch.replace.scope.after_pos"] = "指定位置起 N 个字符";
+		["sch.replace.scope.after_char"] = "指定字符之后";
+		["sch.replace.scope.before_char"] = "指定字符之前";
+		["sch.replace.scope.after_char_n"] = "指定字符之后 N 个";
+		["sch.replace.scope.before_char_n"] = "指定字符之前 N 个";
+		["sch.replace.oldText"] = "查找文本";
+		["sch.replace.caseSensitive"] = "区分大小写";
+		["sch.replace.scopeParam1"] = "N（字符数）";
+		["sch.replace.scopeParam2"] = "位置 / 字符";
+		["sch.replace.newText"] = "替换为";
+
+		["sch.regex.preset"] = "常用正则";
+		["sch.regex.preset.custom"] = "（自定义）";
+		["sch.regex.preset.digits"] = "数字";
+		["sch.regex.preset.nondigits"] = "非数字";
+		["sch.regex.preset.letters"] = "字母";
+		["sch.regex.preset.chinese"] = "中文字符";
+		["sch.regex.preset.space"] = "空白";
+		["sch.regex.preset.date8"] = "8 位日期";
+		["sch.regex.preset.dateDash"] = "年-月-日";
+		["sch.regex.preset.inParen"] = "括号内内容";
+		["sch.regex.preset.inBracket"] = "方括号内内容";
+		["sch.regex.preset.trailDigits"] = "末尾数字";
+		["sch.regex.pattern"] = "正则表达式";
+		["sch.regex.replacement"] = "替换为";
+		["sch.regex.caseSensitive"] = "区分大小写";
+
+		["sch.case.type"] = "转换方式";
+		["sch.case.upper"] = "全部大写";
+		["sch.case.lower"] = "全部小写";
+		["sch.case.first"] = "首字母大写";
+		["sch.case.title"] = "标题格式";
+
+		["sch.seq.start"] = "起始值";
+		["sch.seq.step"] = "步长";
+		["sch.seq.digits"] = "位数（补零）";
+		["sch.seq.position"] = "位置";
+		["sch.seq.pos.end"] = "末尾";
+		["sch.seq.pos.start"] = "开头";
+
+		["sch.date.format"] = "格式";
+		["sch.date.position"] = "位置";
+		["sch.date.pos.end"] = "末尾";
+		["sch.date.pos.start"] = "开头";
+		["sch.date.useFileTime"] = "使用文件修改时间";
+
+		["bool.no"] = "否";
+		["bool.yes"] = "是";
+		["ruleState.enabled"] = "启用";
+		["ruleState.disabled"] = "禁用";
+
+		["status.error"] = "错误";
+		["status.warning"] = "有风险";
+		["status.ok"] = "可改名";
+		["status.changed"] = "已变化";
+		["status.unchanged"] = "未变化";
+		["lv.readFailed"] = "(读取失败)";
+
+		["stat.rules"] = "规则 {1} 条（启用 {2} 条）";
+		["stat.real"] = " ｜ 真实文件 {1} 个：可改名 {2}，未变化 {3}，有风险 {4}（错误 {5} / 警告 {6}） ｜ 执行前需重新检查";
+		["stat.mock"] = " ｜ 模拟预览 {1} 项：变化 {2}，未变化 {3}，错误 {4}";
+
+		["preview.failEngine"] = "预览失败（引擎异常，界面未崩溃）：{1}";
+		["preview.failEmpty"] = "预览失败：引擎没有返回结果";
+
+		["exec.needFiles"] = "请先加载文件或文件夹";
+		["exec.needFilesBox"] = '还没有加载任何文件。\r\n请先点「加载文件」或「加载文件夹」。';
+		["exec.validateHead"] = '校验未通过，不能执行：\r\n\r\n';
+		["exec.validateStatus"] = "校验未通过：错误 {1} 条，未执行任何操作";
+		["exec.confirm"] = "即将重命名 {1} 个文件。";
+		["exec.confirmWarn"] = '\r\n注意：有 {1} 条警告。';
+		["exec.confirmBlocked"] = '\r\n有 {1} 项不执行。';
+		["exec.confirmAsk"] = '\r\n\r\n确定执行吗？';
+		["exec.cancelled"] = "已取消执行";
+		["exec.running"] = "正在执行重命名，请稍候…";
+		["exec.errorStatus"] = "执行过程异常：{1}";
+		["exec.errorBox"] = '执行过程出现异常：\r\n\r\n{1}';
+		["exec.successStatus"] = "执行成功：成功 {1} 个文件，未执行 {2} 项，{3}";
+		["exec.successBox"] = '执行成功。\r\n\r\n成功步骤：{1}\r\n失败步骤：0\r\n未执行项：{2}\r\n是否可撤销：{3}';
+		["exec.failStatus"] = "执行失败：{1}";
+		["exec.failBox"] = '执行失败。\r\n\r\n成功步骤：{1}\r\n失败步骤：1\r\n失败原因：{2}\r\n已自动恢复：{3}\r\n是否可撤销：{4}';
+
+		["undo.undoable"] = "可撤销";
+		["undo.notUndoable"] = "不可撤销";
+		["undo.none"] = "没有可撤销的操作";
+		["undo.noneBox"] = "当前没有可撤销的操作。";
+		["undo.confirm"] = '将撤销该次操作。\r\n\r\n{1}\r\n\r\n确定撤销吗？';
+		["undo.cancelled"] = "已取消撤销";
+		["undo.running"] = "正在撤销，请稍候…";
+		["undo.errorStatus"] = "撤销过程异常：{1}";
+		["undo.errorBox"] = '撤销过程出现异常：\r\n\r\n{1}';
+		["undo.partialStatus"] = "撤销未完全成功：失败 {1} 步";
+		["undo.partialBox"] = '撤销未完全成功，失败 {1} 步。\r\n请手动检查文件状态。';
+		["undo.okStatus"] = "撤销成功：已恢复 {1} 步";
+		["undo.okBox"] = "撤销成功，已恢复 {1} 步。";
+
+		["rule.added"] = "已添加规则：{1}";
+		["rule.selectFirst"] = "请先选择一条规则";
+		["rule.deleted"] = "已删除规则：{1}";
+		["rule.atBoundary"] = "已经到边界了，无法再移动";
+		["rule.moved"] = "已移动规则，当前位置 {1}";
+
+		["files.cleared"] = "已清空文件列表，恢复为内存模拟数据预览";
+		["files.filter"] = "所有文件|*.*|";
+		["files.pickTitle"] = "选择要重命名的文件（可多选）";
+		["dirs.pickTitle"] = "选择文件夹（可多选，仅扫描直接子文件，不递归）";
+		["files.selectedFiles"] = "已选择 {1} 个文件";
+		["files.selectedDirs"] = "已选择 {1} 个文件夹（仅直接子文件，不递归）";
+		["scan.summary"] = "{1}：新增 {2} 个，当前共 {3} 个";
+		["scan.dup"] = "，重复跳过 {1} 个";
+		["scan.failed"] = "，失败 {1} 个";
+
+		["preview.dblclick"] = "原始：{1}  →  目标：{2}";
+
+		["hist.manualRename"] = "手动执行重命名";
+
+		["dlg.cannotExecute"] = "无法执行";
+		["dlg.validationFailed"] = "校验未通过";
+		["dlg.confirmRename"] = "确认执行重命名";
+		["dlg.execResult"] = "执行结果";
+		["dlg.cannotUndo"] = "无法撤销";
+		["dlg.confirmUndo"] = "确认撤销";
+		["dlg.undoResult"] = "撤销结果";
+
+		["hint.title"] = "说明：";
+		["hint.1"] = "本程序只扫描与预检，不会修改、移动或重命名任何真实文件。";
+		["hint.2"] = "未加载文件时使用内存模拟数据预览。";
+		["hint.3"] = "选择文件夹只扫描它的直接子文件，不递归子文件夹。";
+		["hint.4"] = "预检结果仅供参考，执行前需重新检查。";
+		["hint.5"] = "双击预览行可在状态栏查看该行完整路径。";
+		["hint.6"] = "模拟数据：{1}";
+		["hint.6b"] = "（模拟预览用固定时间 {1}）。";
+	}
+	};
+
+	//设置当前语言；传入不支持的代码时保持原语言不变
+	//返回是否设置成功
+	setLang = function(code){
+		if(type(code) != "string") return false;
+
+		var ok = false;
+		for(i=1;#..frename.i18n.LANGS;1){
+			if(..frename.i18n.LANGS[i] == code) ok = true;
+		}
+		if(!ok) return false;
+
+		..frename.i18n.current = code;
+		return true;
+	}
+
+	//取当前语言代码
+	getLang = function(){
+		return ..frename.i18n.current;
+	}
+
+	//取文案
+	//key   文案键，例如 "btn.execute"
+	//...   可选，依次替换文案里的 {1} {2} …
+	//
+	//取不到时返回 key 本身，界面上会直接露出漏翻的键名，方便排查
+	t = function(key,...){
+		var args = {...};
+
+		var tbl = ..frename.i18n.STRINGS[ ..frename.i18n.current ];
+		if(type(tbl) != "table") tbl = ..frename.i18n.STRINGS["en"];
+		if(type(tbl) != "table") return key;
+
+		var s = tbl[key];
+		if(type(s) != "string") return key;
+
+		if(#args){
+			for(i=1;#args;1){
+				//手动替换占位符 {1} {2} …
+				//不用 string.replace：它的查找串按「模式串」解析，而 {1} 的花括号
+				//是量词语法，会让替换出现异常、把路径等内容改坏。
+				//这里用 string.indexOf 字面查找 + 切片拼接，语义确定。
+				//indexOf / left / right 三者都按字节计数，互相一致。
+				var ph = "{" ++ i ++ "}";
+				var v = tostring(args[i]);
+				var p = ..string.indexOf(s, ph);
+
+				while(p){
+					s = ..string.left(s,p-1) ++ v ++ ..string.right(s, -(p + #ph - 1));
+					p = ..string.indexOf(s, ph);
+				}
+			}
+		}
+
+		return s;
+	}
+}

@@ -19,6 +19,7 @@
 
 import preg;
 import frename.nameutil;
+import frename.i18n;
 
 namespace frename.rules{
 
@@ -89,15 +90,15 @@ namespace frename.rules{
 		var n = ..frename.rules.numParam(rule,"scopeParam1",0);
 		var p2 = ..frename.rules.strParam(rule,"scopeParam2","");
 
-		if(scope == "first_n") return "前 " ++ tostring(n) ++ " 个字符";
-		if(scope == "last_n") return "后 " ++ tostring(n) ++ " 个字符";
-		if(scope == "after_pos") return "第 " ++ tostring(..frename.rules.numParam(rule,"scopeParam2",0)) ++ " 位起 " ++ tostring(n) ++ " 个字符";
-		if(scope == "after_char") return "'" ++ p2 ++ "' 之后";
-		if(scope == "before_char") return "'" ++ p2 ++ "' 之前";
-		if(scope == "after_char_n") return "'" ++ p2 ++ "' 之后 " ++ tostring(n) ++ " 个";
-		if(scope == "before_char_n") return "'" ++ p2 ++ "' 之前 " ++ tostring(n) ++ " 个";
+		if(scope == "first_n") return ..frename.i18n.t("rule.scope.first_n", n);
+		if(scope == "last_n") return ..frename.i18n.t("rule.scope.last_n", n);
+		if(scope == "after_pos") return ..frename.i18n.t("rule.scope.after_pos", ..frename.rules.numParam(rule,"scopeParam2",0), n);
+		if(scope == "after_char") return ..frename.i18n.t("rule.scope.after_char", p2);
+		if(scope == "before_char") return ..frename.i18n.t("rule.scope.before_char", p2);
+		if(scope == "after_char_n") return ..frename.i18n.t("rule.scope.after_char_n", p2, n);
+		if(scope == "before_char_n") return ..frename.i18n.t("rule.scope.before_char_n", p2, n);
 
-		return "查找文本";
+		return ..frename.i18n.t("sch.replace.scope.all");
 	}
 
 	//rules/replace.go ParseReplaceScope（未知值回退为 all）
@@ -310,7 +311,7 @@ namespace frename.rules{
 			err = e;
 		}
 
-		if(!re) return null, "无效的正则表达式: " ++ tostring(err);
+		if(!re) return null, ..frename.i18n.t("rule.err.invalidRegex", tostring(err));
 
 		var out = re.replace(name,replacement);
 		re.free();
@@ -395,10 +396,10 @@ namespace frename.rules{
 		if(t == "add_text"){
 			var text = ..frename.rules.strParam(rule,"text","");
 			var pos = ..frename.rules.parseAddPosition( ..frename.rules.strParam(rule,"addPosition","") );
-			if(pos == "prefix") return "前缀添加: " ++ text;
-			if(pos == "suffix") return "后缀添加: " ++ text;
-			if(pos == "custom") return "位置" ++ tostring(..frename.rules.numParam(rule,"customPosition",0)) ++ "添加: " ++ text;
-			return "添加字符: " ++ text;
+			if(pos == "prefix") return ..frename.i18n.t("rule.desc.addPrefix", text);
+			if(pos == "suffix") return ..frename.i18n.t("rule.desc.addSuffix", text);
+			if(pos == "custom") return ..frename.i18n.t("rule.desc.addAtPos", ..frename.rules.numParam(rule,"customPosition",0), text);
+			return ..frename.i18n.t("rule.desc.addText", text);
 		}
 
 		if(t == "replace"){
@@ -408,56 +409,55 @@ namespace frename.rules{
 			//只有「查找文本」范围是按查找文本匹配的；其余范围按位置改写，
 			//没有查找文本可显示，所以改成描述所选范围，避免说明里出现空的查找文本
 			if(scope != "all"){
-				return "文本替换[" ++ ..frename.rules.replaceScopeDesc(rule,scope) ++ "]: → " ++ newText;
+				return ..frename.i18n.t("rule.desc.replaceScoped", ..frename.rules.replaceScopeDesc(rule,scope), newText);
 			}
 
 			var caseStr = "";
-			if(!..frename.rules.boolParam(rule,"caseSensitive")) caseStr = "(忽略大小写)";
-			return "文本替换: "
-				++ ..frename.rules.strParam(rule,"oldText","")
-				++ " → "
-				++ newText
-				++ " " ++ caseStr;
+			if(!..frename.rules.boolParam(rule,"caseSensitive")) caseStr = ..frename.i18n.t("rule.desc.ignoreCase");
+			return ..frename.i18n.t("rule.desc.replace",
+				..frename.rules.strParam(rule,"oldText",""),
+				newText,
+				caseStr);
 		}
 
 		if(t == "regex_replace"){
-			return "正则替换: "
-				++ ..frename.rules.strParam(rule,"pattern","")
-				++ " → "
-				++ ..frename.rules.strParam(rule,"replacement","");
+			return ..frename.i18n.t("rule.desc.regex",
+				..frename.rules.strParam(rule,"pattern",""),
+				..frename.rules.strParam(rule,"replacement",""));
 		}
 
 		if(t == "case_convert"){
 			var caseDesc;
 			var ct = ..frename.rules.strParam(rule,"caseType","");
-			if(ct == "upper") caseDesc = "全部大写";
-			elseif(ct == "lower") caseDesc = "全部小写";
-			elseif(ct == "first") caseDesc = "首字母大写";
-			elseif(ct == "title") caseDesc = "标题格式";
+			if(ct == "upper") caseDesc = ..frename.i18n.t("sch.case.upper");
+			elseif(ct == "lower") caseDesc = ..frename.i18n.t("sch.case.lower");
+			elseif(ct == "first") caseDesc = ..frename.i18n.t("sch.case.first");
+			elseif(ct == "title") caseDesc = ..frename.i18n.t("sch.case.title");
 			else caseDesc = ct;
-			return "大小写转换: " ++ caseDesc;
+			return ..frename.i18n.t("rule.desc.caseConvert", caseDesc);
 		}
 
 		if(t == "sequence"){
-			var posDesc = "末尾";
-			if(..frename.rules.parsePosition( ..frename.rules.strParam(rule,"position","") ) == "start") posDesc = "开头";
-			return "数字序列: 起始" ++ tostring(..frename.rules.numParam(rule,"start",0))
-				++ ", 步长" ++ tostring(..frename.rules.numParam(rule,"step",0))
-				++ ", 位数" ++ tostring(..frename.rules.numParam(rule,"digits",0))
-				++ ", 位置" ++ posDesc;
+			var posDesc = ..frename.i18n.t("sch.seq.pos.end");
+			if(..frename.rules.parsePosition( ..frename.rules.strParam(rule,"position","") ) == "start") posDesc = ..frename.i18n.t("sch.seq.pos.start");
+			return ..frename.i18n.t("rule.desc.seq",
+				..frename.rules.numParam(rule,"start",0),
+				..frename.rules.numParam(rule,"step",0),
+				..frename.rules.numParam(rule,"digits",0),
+				posDesc);
 		}
 
 		if(t == "date_time"){
-			var timePosDesc = "末尾";
-			if(..frename.rules.parsePosition( ..frename.rules.strParam(rule,"position","") ) == "start") timePosDesc = "开头";
+			var timePosDesc = ..frename.i18n.t("sch.date.pos.end");
+			if(..frename.rules.parsePosition( ..frename.rules.strParam(rule,"position","") ) == "start") timePosDesc = ..frename.i18n.t("sch.date.pos.start");
 
-			var timeDesc = "当前时间";
-			if(..frename.rules.boolParam(rule,"useFileTime")) timeDesc = "文件修改时间";
+			var timeDesc = ..frename.i18n.t("rule.desc.timeNow");
+			if(..frename.rules.boolParam(rule,"useFileTime")) timeDesc = ..frename.i18n.t("rule.desc.timeFile");
 
-			return "日期时间: "
-				++ ..frename.rules.parseFormat( ..frename.rules.strParam(rule,"format","") )
-				++ ", 位置" ++ timePosDesc
-				++ ", " ++ timeDesc;
+			return ..frename.i18n.t("rule.desc.dateTime",
+				..frename.rules.parseFormat( ..frename.rules.strParam(rule,"format","") ),
+				timePosDesc,
+				timeDesc);
 		}
 
 		return t;

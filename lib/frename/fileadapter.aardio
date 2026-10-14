@@ -16,6 +16,8 @@
 // 它只提供「移动 / 删除」能力，不提供创建、复制、写入能力，
 // 也没有任何「批量执行重命名」的入口——要不要真的动手由调用方决定。
 
+import frename.i18n;
+
 namespace frename.fileadapter{
 
 	//创建 Windows 文件系统的执行上下文
@@ -40,7 +42,7 @@ namespace frename.fileadapter{
 		//判断路径是否存在
 		fs.existsFunc = function(path){
 			if(type(path) != "string" || !#path){
-				fs.lastError = "路径为空或不是字符串";
+				fs.lastError = ..frename.i18n.t("adapter.emptyPath");
 				return false;
 			}
 
@@ -49,7 +51,7 @@ namespace frename.fileadapter{
 				result = ..io.exist(path) ? true : false;
 			}
 			catch(e){
-				fs.lastError = "判断路径是否存在时出错：" ++ tostring(e);
+				fs.lastError = ..frename.i18n.t("adapter.existErr", tostring(e));
 				return false;
 			}
 
@@ -66,8 +68,8 @@ namespace frename.fileadapter{
 		//注意：即便跳过检查，io.move 本身失败照样会返回失败原因并触发回滚，
 		//安全性没有降低。
 		fs.moveFunc = function(from,to,prechecked){
-			if(type(from) != "string" || !#from) return fail("源路径为空或不是字符串");
-			if(type(to) != "string" || !#to) return fail("目标路径为空或不是字符串");
+			if(type(from) != "string" || !#from) return fail(..frename.i18n.t("adapter.emptySrc"));
+			if(type(to) != "string" || !#to) return fail(..frename.i18n.t("adapter.emptyDst"));
 
 			if(!prechecked){
 				//前置检查：让失败原因更具体（说清是源不存在还是目标被占用）
@@ -76,18 +78,18 @@ namespace frename.fileadapter{
 					srcOk = ..io.exist(from) ? true : false;
 				}
 				catch(e){
-					return fail("检查源路径时出错：" ++ tostring(e));
+					return fail(..frename.i18n.t("adapter.checkSrcErr", tostring(e)));
 				}
-				if(!srcOk) return fail("源文件不存在：" ++ from);
+				if(!srcOk) return fail(..frename.i18n.t("adapter.srcMissing", from));
 
 				var dstOk;
 				try{
 					dstOk = ..io.exist(to) ? true : false;
 				}
 				catch(e){
-					return fail("检查目标路径时出错：" ++ tostring(e));
+					return fail(..frename.i18n.t("adapter.checkDstErr", tostring(e)));
 				}
-				if(dstOk) return fail("目标路径已存在，不覆盖：" ++ to);
+				if(dstOk) return fail(..frename.i18n.t("adapter.dstExists", to));
 			}
 
 			var ok;
@@ -95,10 +97,10 @@ namespace frename.fileadapter{
 				ok = ..io.move(from,to);
 			}
 			catch(e){
-				return fail("移动文件时出错：" ++ tostring(e));
+				return fail(..frename.i18n.t("adapter.moveErr", tostring(e)));
 			}
 
-			if(!ok) return fail("移动文件失败（可能没有权限或文件被其它程序占用）：" ++ from ++ " → " ++ to);
+			if(!ok) return fail(..frename.i18n.t("adapter.moveFailed", from, to));
 
 			fs.lastError = "";
 			return true;
@@ -106,26 +108,26 @@ namespace frename.fileadapter{
 
 		//删除文件
 		fs.deleteFunc = function(path){
-			if(type(path) != "string" || !#path) return fail("路径为空或不是字符串");
+			if(type(path) != "string" || !#path) return fail(..frename.i18n.t("adapter.emptyPath"));
 
 			var existOk;
 			try{
 				existOk = ..io.exist(path) ? true : false;
 			}
 			catch(e){
-				return fail("检查路径时出错：" ++ tostring(e));
+				return fail(..frename.i18n.t("adapter.checkDelErr", tostring(e)));
 			}
-			if(!existOk) return fail("要删除的文件不存在：" ++ path);
+			if(!existOk) return fail(..frename.i18n.t("adapter.delMissing", path));
 
 			var ok;
 			try{
 				ok = ..io.remove(path);
 			}
 			catch(e){
-				return fail("删除文件时出错：" ++ tostring(e));
+				return fail(..frename.i18n.t("adapter.deleteErr", tostring(e)));
 			}
 
-			if(!ok) return fail("删除文件失败（可能没有权限或文件被其它程序占用）：" ++ path);
+			if(!ok) return fail(..frename.i18n.t("adapter.delFailed", path));
 
 			fs.lastError = "";
 			return true;

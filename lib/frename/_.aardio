@@ -9,6 +9,7 @@
 
 import frename.rules;
 import frename.nameutil;
+import frename.i18n;
 
 namespace frename{
 
@@ -120,7 +121,7 @@ namespace frename{
 
 						if(next === null){
 							//规则失败：保留已应用的结果，停止后续规则，并记录错误
-							errMsg = "规则 " ++ ..frename.rules.description(rule) ++ " 应用失败: " ++ tostring(err);
+							errMsg = ..frename.i18n.t("rule.err.applyFailed", ..frename.rules.description(rule), tostring(err));
 
 							..table.push(steps,{
 								type = ruleType;

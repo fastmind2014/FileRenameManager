@@ -15,6 +15,7 @@
 // 也就是「什么都不做、执行必然失败」，避免忘记注入时误操作真实文件系统。
 
 import frename.filescan;
+import frename.i18n;
 
 namespace frename.executor{
 
@@ -73,7 +74,7 @@ namespace frename.executor{
 		};
 
 		if(type(plan) != "table" || type(plan.steps) != "table"){
-			result.message = "计划为空或没有可执行步骤";
+			result.message = ..frename.i18n.t("exec.emptyPlan");
 			return result;
 		}
 
@@ -83,17 +84,17 @@ namespace frename.executor{
 
 			//前置检查：来源必须存在，目标必须没有被占用
 			if(!c.existsFunc(s.from)){
-				result.failedStep = { step=s; reason="来源文件不存在：" ++ s.from };
+				result.failedStep = { step=s; reason=..frename.i18n.t("exec.srcMissing", s.from) };
 				break;
 			}
 			if(c.existsFunc(s.to)){
-				result.failedStep = { step=s; reason="目标路径已被占用：" ++ s.to };
+				result.failedStep = { step=s; reason=..frename.i18n.t("exec.dstOccupied", s.to) };
 				break;
 			}
 			//第三个参数 true：上面刚查过「源存在、目标未被占用」，
 			//让适配层不必再重复查一遍，批量执行时每步省 2 次磁盘查询
 			if(!c.moveFunc(s.from,s.to,true)){
-				result.failedStep = { step=s; reason="移动失败：" ++ s.from ++ " → " ++ s.to };
+				result.failedStep = { step=s; reason=..frename.i18n.t("exec.moveFailed", s.from, s.to) };
 				break;
 			}
 
@@ -103,13 +104,13 @@ namespace frename.executor{
 		//全部走完：成功
 		if(!result.failedStep){
 			result.success = true;
-			result.message = "执行成功，共 " ++ #result.executed ++ " 步";
+			result.message = ..frename.i18n.t("exec.successMsg", #result.executed);
 			return result;
 		}
 
 		//中途失败：自动回滚已执行的步骤，尽量回到执行前的状态
-		result.message = "执行失败（阶段 " ++ tostring(result.failedStep.step.phase) ++ "）："
-			++ result.failedStep.reason;
+		result.message = ..frename.i18n.t("exec.failMsg",
+			tostring(result.failedStep.step.phase), result.failedStep.reason);
 
 		var rb = ..frename.executor.rollback(result.executed,c);
 
@@ -118,10 +119,10 @@ namespace frename.executor{
 		result.rollbackFailed = rb.failed;
 
 		if(rb.ok){
-			result.message = result.message ++ "；已自动恢复到执行前状态";
+			result.message = result.message ++ ..frename.i18n.t("exec.restored");
 		}
 		else {
-			result.message = result.message ++ "；自动恢复未完全成功，失败 " ++ #rb.failed ++ " 步";
+			result.message = result.message ++ ..frename.i18n.t("exec.restorePartial", #rb.failed);
 		}
 
 		return result;
@@ -156,13 +157,13 @@ namespace frename.executor{
 			//先删除它，否则移动会失败；删除失败就记录并跳过这一步。
 			if(c.existsFunc(e.from)){
 				if(!c.deleteFunc(e.from)){
-					..table.push(r.failed,{ step=e; reason="撤销时无法删除已存在的路径：" ++ e.from });
+					..table.push(r.failed,{ step=e; reason=..frename.i18n.t("exec.undoDeleteFail", e.from) });
 					continue;
 				}
 			}
 
 			if(!c.moveFunc(e.to,e.from)){
-				..table.push(r.failed,{ step=e; reason="撤销移动失败：" ++ e.to ++ " → " ++ e.from });
+				..table.push(r.failed,{ step=e; reason=..frename.i18n.t("exec.undoMoveFail", e.to, e.from) });
 				continue;
 			}
 

@@ -23,6 +23,7 @@
 
 import frename.filescan;
 import frename.precheck;
+import frename.i18n;
 
 namespace frename.renameplan{
 
@@ -80,7 +81,7 @@ namespace frename.renameplan{
 
 			//名称没变：不需要执行
 			if(!it.changed){
-				..table.push(blocked,{ index=i; sourcePath=it.sourcePath; reason="名称未变化，无需执行" });
+				..table.push(blocked,{ index=i; sourcePath=it.sourcePath; reason=..frename.i18n.t("plan.unchanged") });
 				continue;
 			}
 
@@ -117,7 +118,7 @@ namespace frename.renameplan{
 				var temp = ..frename.renameplan.tempName(info.dir,op.index,info.ext,existsFn);
 
 				if(!temp){
-					..table.push(blocked,{ index=op.index; sourcePath=op.sourcePath; reason="无法生成不冲突的临时文件名" });
+					..table.push(blocked,{ index=op.index; sourcePath=op.sourcePath; reason=..frename.i18n.t("plan.tempFailed") });
 					continue;
 				}
 
@@ -202,7 +203,7 @@ namespace frename.renameplan{
 				if(!state[[fromKey]]){
 					..table.push(failed,{
 						step = i; phase = s.phase; from = s.from; to = s.to;
-						reason = "来源文件不存在（可能已被移动或删除）";
+						reason = ..frename.i18n.t("plan.simSrcMissing");
 					});
 					continue;
 				}
@@ -210,7 +211,7 @@ namespace frename.renameplan{
 				if(state[[toKey]]){
 					..table.push(failed,{
 						step = i; phase = s.phase; from = s.from; to = s.to;
-						reason = "目标路径已被占用";
+						reason = ..frename.i18n.t("plan.simDstOccupied");
 					});
 					continue;
 				}
@@ -272,7 +273,7 @@ namespace frename.renameplan{
 		for(i=1;#simulated.undoLog;1){
 			var e = simulated.undoLog[i];
 			if(#s) s = s ++ '\r\n';
-			s = s ++ "阶段" ++ e.phase ++ "：" ++ e.from ++ "  →  " ++ e.to;
+			s = s ++ ..frename.i18n.t("plan.logLine", e.phase, e.from, e.to);
 		}
 		return s;
 	}

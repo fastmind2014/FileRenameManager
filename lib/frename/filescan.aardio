@@ -8,6 +8,7 @@
 // 不创建、修改、移动、删除、重命名任何文件或目录，也不写入任何内容。
 
 import fsys;
+import frename.i18n;
 
 namespace frename.filescan{
 
@@ -54,8 +55,8 @@ namespace frename.filescan{
 	//读取单个文件的元数据，失败返回 null,错误原因
 	readFileInfo = function(full){
 		var info = ..io.splitpath(full);
-		if(type(info) != "table") return null,"路径无法解析";
-		if(!#info.file) return null,"路径中没有文件名";
+		if(type(info) != "table") return null,..frename.i18n.t("scan.badPath");
+		if(!#info.file) return null,..frename.i18n.t("scan.noFile");
 
 		var size = ..io.getSize(full);
 		var modTime;
@@ -75,7 +76,7 @@ namespace frename.filescan{
 	addOne = function(files,errors,keys,stat,full){
 		var path = ..frename.filescan.normalizePath(full);
 		if(!#path){
-			..table.push(errors,{ path=tostring(full); reason="路径为空" });
+			..table.push(errors,{ path=tostring(full); reason=..frename.i18n.t("scan.emptyPath") });
 			return;
 		}
 
@@ -83,7 +84,7 @@ namespace frename.filescan{
 		if(..fsys.isDir(path)) return;
 
 		if(!..io.exist(path)){
-			..table.push(errors,{ path=path; reason="文件不存在或无法访问" });
+			..table.push(errors,{ path=path; reason=..frename.i18n.t("scan.missing") });
 			return;
 		}
 
@@ -96,7 +97,7 @@ namespace frename.filescan{
 
 		var info,reason = ..frename.filescan.readFileInfo(path);
 		if(!info){
-			..table.push(errors,{ path=path; reason=(reason : "无法读取文件信息") });
+			..table.push(errors,{ path=path; reason=(reason : ..frename.i18n.t("scan.readErr")) });
 			return;
 		}
 
@@ -135,7 +136,7 @@ namespace frename.filescan{
 				//fsys.list 只列出直接子项，不递归；第一个返回值是文件数组
 				var names = ..fsys.list(p);
 				if(type(names) != "table"){
-					..table.push(errors,{ path=p; reason="无法读取该目录（可能不存在或没有访问权限）" });
+					..table.push(errors,{ path=p; reason=..frename.i18n.t("scan.dirFailed") });
 					continue;
 				}
 

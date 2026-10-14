@@ -8,6 +8,7 @@
 // 因此不能拿未经处理的字符串直接比较。
 
 import frename.filescan;
+import frename.i18n;
 
 namespace frename.precheck{
 
@@ -21,18 +22,18 @@ namespace frename.precheck{
 
 	//检查目标文件名是否合法；返回 null 表示合法，否则返回原因文本
 	invalidNameReason = function(name){
-		if(type(name) != "string" || !#name) return "目标文件名为空";
+		if(type(name) != "string" || !#name) return ..frename.i18n.t("check.emptyName");
 
 		//不允许的字符
 		for(i=1;#..frename.precheck.INVALID_CHARS;1){
 			var c = ..frename.precheck.INVALID_CHARS[i];
-			if(..string.indexOf(name,c)) return "目标文件名包含不允许的字符：" ++ c;
+			if(..string.indexOf(name,c)) return ..frename.i18n.t("check.invalidChar", c);
 		}
 
 		//结尾是空格或点时，Windows 会自动去掉，实际名字会与预期不一致
 		var last = ..string.right(name,1);
-		if(last == " ") return "目标文件名不能以空格结尾";
-		if(last == ".") return "目标文件名不能以点结尾";
+		if(last == " ") return ..frename.i18n.t("check.trailingSpace");
+		if(last == ".") return ..frename.i18n.t("check.trailingDot");
 
 		//保留设备名：去掉扩展名后再比较
 		var stem = name;
@@ -41,7 +42,7 @@ namespace frename.precheck{
 
 		var up = ..string.upper(stem);
 		for(i=1;#..frename.precheck.RESERVED_NAMES;1){
-			if(up == ..frename.precheck.RESERVED_NAMES[i]) return "目标文件名使用了 Windows 保留名：" ++ up;
+			if(up == ..frename.precheck.RESERVED_NAMES[i]) return ..frename.i18n.t("check.reservedName", up);
 		}
 
 		return null;
@@ -108,7 +109,7 @@ namespace frename.precheck{
 			//1. 命名规则本身计算失败
 			if(it.error){
 				it.status = "error";
-				..table.push(reasons,"规则计算失败：" ++ tostring(it.error));
+				..table.push(reasons,..frename.i18n.t("check.ruleFailed", tostring(it.error)));
 				continue;
 			}
 
@@ -141,8 +142,8 @@ namespace frename.precheck{
 				}
 
 				it.status = "error";
-				if(onlyCase) ..table.push(reasons,"与其它目标路径仅大小写不同，Windows 下视为同一个文件");
-				else ..table.push(reasons,"多个文件生成了相同的目标路径");
+				if(onlyCase) ..table.push(reasons,..frename.i18n.t("check.onlyCase"));
+				else ..table.push(reasons,..frename.i18n.t("check.dupTarget"));
 				continue;
 			}
 
@@ -154,20 +155,20 @@ namespace frename.precheck{
 					//目标就是自己：只是大小写变化
 					it.occupancy = "self_case";
 					it.status = "warning";
-					..table.push(reasons,"仅文件名大小写变化，Windows 文件系统不区分大小写，可能需要中间步骤");
+					..table.push(reasons,..frename.i18n.t("check.selfCase"));
 				}
 				elseif(srcIdx){
 					//被本批次其它待处理文件占用：A→B、B→C 这类链式情形。
 					//它不是必然冲突，但能否成功取决于执行顺序，所以标记为风险而不是错误。
 					it.occupancy = "batch_source";
 					it.status = "warning";
-					..table.push(reasons,"目标被本批次待处理文件占用（链式重命名，能否成功取决于执行顺序）");
+					..table.push(reasons,..frename.i18n.t("check.chainOccupied"));
 				}
 				else {
 					//被本批次之外的文件占用：真实冲突
 					it.occupancy = "outside";
 					it.status = "error";
-					..table.push(reasons,"目标路径已被本批次之外的文件占用");
+					..table.push(reasons,..frename.i18n.t("check.outsideOccupied"));
 				}
 				continue;
 			}
