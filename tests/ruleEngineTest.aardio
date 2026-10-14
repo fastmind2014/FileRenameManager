@@ -11,9 +11,14 @@
 
 import console;
 import frename;
+import frename.i18n;
 
 //true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
 console.open(true);
+
+//基线 tests/reference/go-baseline.txt 记录的是旧版 Go 的真实输出（中文）。
+//本测试要与之逐字比对，因此固定用中文运行，不受界面默认语言影响。
+frename.i18n.setLang("zh");
 
 //旧版 Go 侧使用的固定修改时间：2026-01-02 15:04:05（本地时区）
 var MOD_TS = 1767337445;

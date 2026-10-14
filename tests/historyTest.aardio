@@ -20,6 +20,9 @@ import frename.history;
 //true 表示启用 UTF-8 输出，保证控制台里的中文不乱码
 console.open(true);
 
+//这些断言沿用引擎的中文文案，因此固定用中文运行（界面默认英文不影响测试）
+..frename.i18n.setLang("zh");
+
 var passed = 0;
 var failed = 0;
 
