@@ -42,19 +42,24 @@ import frename.validate;
 import frename.executor;
 import frename.history;
 import frename.fileadapter;
+import frename.i18n;
+
+//界面文案统一走 i18n：T(key,...) 取当前语言的文案，支持 {1} {2} 占位符。
+//默认语言为 English（见 frename.i18n.current；改成 "zh" 即切回中文）。
+var T = ..frename.i18n.t;
 
 /*DSG{{*/
-var winform = win.form(text="FileRenameManager - 规则编辑与预览";right=960;bottom=644)
+var winform = win.form(text=T("app.title");right=960;bottom=644)
 winform.add(
-lblRules={cls="static";text="规则列表（自上而下依次应用）";left=12;top=12;right=452;bottom=32;z=1};
+lblRules={cls="static";text=T("lbl.rules");left=12;top=12;right=452;bottom=32;z=1};
 cmbRuleType={cls="combobox";left=12;top=36;right=296;bottom=60;edge=1;items={};mode="dropdownlist";z=2};
-btnAdd={cls="button";text="添加规则";left=304;top=34;right=452;bottom=62;z=3};
+btnAdd={cls="button";text=T("btn.add");left=304;top=34;right=452;bottom=62;z=3};
 lvRules={cls="listview";left=12;top=68;right=452;bottom=286;edge=1;fullRow=1;gridLines=1;z=4};
-btnUp={cls="button";text="上移";left=12;top=294;right=100;bottom=324;z=5};
-btnDown={cls="button";text="下移";left=108;top=294;right=196;bottom=324;z=6};
-btnDelete={cls="button";text="删除";left=204;top=294;right=292;bottom=324;z=7};
-chkEnabled={cls="checkbox";text="启用当前规则";left=300;top=298;right=452;bottom=322;z=8};
-lblParams={cls="static";text="规则参数：";left=12;top=332;right=452;bottom=352;z=9};
+btnUp={cls="button";text=T("btn.up");left=12;top=294;right=100;bottom=324;z=5};
+btnDown={cls="button";text=T("btn.down");left=108;top=294;right=196;bottom=324;z=6};
+btnDelete={cls="button";text=T("btn.delete");left=204;top=294;right=292;bottom=324;z=7};
+chkEnabled={cls="checkbox";text=T("chk.enabled");left=300;top=298;right=452;bottom=322;z=8};
+lblParams={cls="static";text=T("lbl.params");left=12;top=332;right=452;bottom=352;z=9};
 lblP1={cls="static";left=12;top=358;right=162;bottom=382;hide=1;z=10};
 txtP1={cls="edit";left=166;top=354;right=452;bottom=382;edge=1;hide=1;z=11};
 cmbP1={cls="combobox";left=166;top=354;right=452;bottom=382;edge=1;hide=1;items={};mode="dropdownlist";z=12};
@@ -74,14 +79,15 @@ lblP6={cls="static";left=12;top=508;right=162;bottom=532;hide=1;z=25};
 txtP6={cls="edit";left=166;top=504;right=452;bottom=532;edge=1;hide=1;z=26};
 cmbP6={cls="combobox";left=166;top=504;right=452;bottom=532;edge=1;hide=1;items={};mode="dropdownlist";z=27};
 lblHint={cls="static";left=12;top=540;right=452;bottom=616;z=28};
-lblPreview={cls="static";text="预览（未加载真实文件时为内存模拟数据）";left=464;top=12;right=948;bottom=32;z=29};
-btnLoadFiles={cls="button";text="加载文件";left=464;top=36;right=560;bottom=64;z=32};
-btnLoadDir={cls="button";text="加载文件夹";left=568;top=36;right=676;bottom=64;z=33};
-btnClearFiles={cls="button";text="清空文件列表";left=684;top=36;right=792;bottom=64;z=34};
-btnExecute={cls="button";text="执行重命名";left=464;top=68;right=704;bottom=96;z=35};
-btnUndo={cls="button";text="撤销上一次操作";left=712;top=68;right=948;bottom=96;z=36};
+lblPreview={cls="static";text=T("lbl.preview");left=464;top=12;right=948;bottom=32;z=29};
+btnLoadFiles={cls="button";text=T("btn.loadFiles");left=464;top=36;right=560;bottom=64;z=32};
+btnLoadDir={cls="button";text=T("btn.loadDir");left=568;top=36;right=676;bottom=64;z=33};
+btnClearFiles={cls="button";text=T("btn.clearFiles");left=684;top=36;right=792;bottom=64;z=34};
+btnExecute={cls="button";text=T("btn.execute");left=464;top=68;right=704;bottom=96;z=35};
+btnUndo={cls="button";text=T("btn.undo");left=712;top=68;right=948;bottom=96;z=36};
 lvPreview={cls="listview";left=464;top=104;right=948;bottom=592;edge=1;fullRow=1;gridLines=1;z=30};
-lblStatus={cls="static";text="就绪";left=12;top=602;right=948;bottom=630;edge=1;z=31}
+lblStatus={cls="static";text=T("lbl.status.ready");left=12;top=602;right=948;bottom=630;edge=1;z=31};
+cmbLang={cls="combobox";left=856;top=602;right=948;bottom=630;edge=1;items={};mode="dropdownlist";z=37}
 )
 /*}}*/
 
@@ -127,43 +133,45 @@ var MIN_CLIENT_H = 560;
 //四列宽度固定，总和 = LEFT_W(440)，默认打开即可完整看到「状态」列。
 //（之前「状态」列用 -1 走 fillParent 自适应，初始绘制/DPI/重排时容易被挤出可视区。）
 winform.lvRules.columns = {
-	{"#",34,2/*_LVCFMT_CENTER*/};
-	{"类型",90,0/*_LVCFMT_LEFT*/};
-	{"说明",236,0/*_LVCFMT_LEFT*/};
-	{"状态",80,2/*_LVCFMT_CENTER*/}
+	{T("col.rules.no"),34,2/*_LVCFMT_CENTER*/};
+	{T("col.rules.type"),90,0/*_LVCFMT_LEFT*/};
+	{T("col.rules.desc"),236,0/*_LVCFMT_LEFT*/};
+	{T("col.rules.status"),80,2/*_LVCFMT_CENTER*/}
 };
 
 //真实文件预览：完整路径放在最后两列，列宽固定，
 //窗口不够宽时可横向滚动查看，也可以用鼠标双击某一行在状态栏看完整路径。
 winform.lvPreview.columns = {
-	{"原名称",110,0/*_LVCFMT_LEFT*/};
-	{"目标名称",110,0/*_LVCFMT_LEFT*/};
-	{"状态",60,2/*_LVCFMT_CENTER*/};
-	{"说明 / 错误",170,0/*_LVCFMT_LEFT*/};
-	{"原始完整路径",240,0/*_LVCFMT_LEFT*/};
-	{"目标完整路径",240,0/*_LVCFMT_LEFT*/}
+	{T("col.prev.orig"),110,0/*_LVCFMT_LEFT*/};
+	{T("col.prev.target"),110,0/*_LVCFMT_LEFT*/};
+	{T("col.prev.status"),60,2/*_LVCFMT_CENTER*/};
+	{T("col.prev.note"),170,0/*_LVCFMT_LEFT*/};
+	{T("col.prev.srcPath"),240,0/*_LVCFMT_LEFT*/};
+	{T("col.prev.dstPath"),240,0/*_LVCFMT_LEFT*/}
 };
 
 //---------- 常量与静态数据 ----------
 
-//六类规则：下拉框显示文本 -> 规则 type 取值
+//六类规则：textKey 存 i18n 键（显示时再由 T() 取值），value 是规则 type 取值。
+//存键而不是存文本，是为了切换语言后不必重建这两张表，
+//下拉框与规则列表「说明」列都能跟着当前语言变。
 var RULE_TYPES = {
-	{ text="添加字符"; value=frename.TYPE_ADD_TEXT };
-	{ text="文本替换"; value=frename.TYPE_REPLACE };
-	{ text="正则替换"; value=frename.TYPE_REGEX_REPLACE };
-	{ text="大小写转换"; value=frename.TYPE_CASE_CONVERT };
-	{ text="数字序列"; value=frename.TYPE_SEQUENCE };
-	{ text="日期时间"; value=frename.TYPE_DATE_TIME }
+	{ textKey="rule.add_text"; value=frename.TYPE_ADD_TEXT };
+	{ textKey="rule.replace"; value=frename.TYPE_REPLACE };
+	{ textKey="rule.regex_replace"; value=frename.TYPE_REGEX_REPLACE };
+	{ textKey="rule.case_convert"; value=frename.TYPE_CASE_CONVERT };
+	{ textKey="rule.sequence"; value=frename.TYPE_SEQUENCE };
+	{ textKey="rule.date_time"; value=frename.TYPE_DATE_TIME }
 };
 
-//规则 type -> 显示文本
+//规则 type -> 显示文案的 i18n 键
 var RULE_TYPE_TEXTS = {
-	add_text = "添加字符";
-	replace = "文本替换";
-	regex_replace = "正则替换";
-	case_convert = "大小写转换";
-	sequence = "数字序列";
-	date_time = "日期时间"
+	add_text = "rule.add_text";
+	replace = "rule.replace";
+	regex_replace = "rule.regex_replace";
+	case_convert = "rule.case_convert";
+	sequence = "rule.sequence";
+	date_time = "rule.date_time"
 };
 
 //每种规则的默认参数（对应旧版 frontend/src/stores/rule.ts 的 getDefaultParams）
@@ -181,12 +189,14 @@ var defaultParams = function(t){
 //kind = "edit" 文本输入 / "combo" 下拉选择 / "bool" 是-否选择
 //最多 6 行（文本替换的参数最多）
 //label 不要写太长，参数行标签宽度只有 LBL_PARAM_W，超出会被控件自动折行
+//labelKey / textKeys 存 i18n 键，显示时再由 T() 取值 —— 切换语言后能立即生效；
+//key / values / patterns / showIf.value 是内部取值，必须保持原样，不能翻译
 var SCHEMA = {
 	add_text = {
-		{ key="text"; label="添加的文本"; kind="edit" };
-		{ key="addPosition"; label="添加位置"; kind="combo"; texts={"前缀";"后缀";"指定位置"}; values={"prefix";"suffix";"custom"} };
+		{ key="text"; labelKey="sch.add_text.text"; kind="edit" };
+		{ key="addPosition"; labelKey="sch.add_text.position"; kind="combo"; textKeys={"sch.add_text.pos.prefix";"sch.add_text.pos.suffix";"sch.add_text.pos.custom"}; values={"prefix";"suffix";"custom"} };
 		//showIf：只有「添加位置」选中 custom 时才显示这一行
-		{ key="customPosition"; label="指定位置（第几字前）"; kind="edit"; showIf={key="addPosition";value="custom"} }
+		{ key="customPosition"; labelKey="sch.add_text.customPos"; kind="edit"; showIf={key="addPosition";value="custom"} }
 	};
 	//「替换范围」是主控项，放在第一行；其余参数按所选范围用 showIf 决定显不显示：
 	//   只有选中「查找文本」才需要 oldText 与 caseSensitive（按查找文本匹配替换）；
@@ -195,51 +205,51 @@ var SCHEMA = {
 	//「替换为」放在最后：不管选哪个范围它都要用，放最后一行位置才稳定，
 	//   不会随着上面几行的隐藏而上移。
 	replace = {
-		{ key="replaceScope"; label="替换范围"; kind="combo";
-			texts={"查找文本";"前 N 个字符";"后 N 个字符";"指定位置起 N 个字符";"指定字符之后";"指定字符之前";"指定字符之后 N 个";"指定字符之前 N 个"};
+		{ key="replaceScope"; labelKey="sch.replace.scope"; kind="combo";
+			textKeys={"sch.replace.scope.all";"sch.replace.scope.first_n";"sch.replace.scope.last_n";"sch.replace.scope.after_pos";"sch.replace.scope.after_char";"sch.replace.scope.before_char";"sch.replace.scope.after_char_n";"sch.replace.scope.before_char_n"};
 			values={"all";"first_n";"last_n";"after_pos";"after_char";"before_char";"after_char_n";"before_char_n"} };
-		{ key="oldText"; label="查找文本"; kind="edit"; showIf={key="replaceScope";value="all"} };
-		{ key="caseSensitive"; label="区分大小写"; kind="bool"; showIf={key="replaceScope";value="all"} };
+		{ key="oldText"; labelKey="sch.replace.oldText"; kind="edit"; showIf={key="replaceScope";value="all"} };
+		{ key="caseSensitive"; labelKey="sch.replace.caseSensitive"; kind="bool"; showIf={key="replaceScope";value="all"} };
 		//需要「字符数 N」的范围
-		{ key="scopeParam1"; label="N（字符数）"; kind="edit"; showIf={key="replaceScope";values={"first_n";"last_n";"after_pos";"after_char_n";"before_char_n"}} };
+		{ key="scopeParam1"; labelKey="sch.replace.scopeParam1"; kind="edit"; showIf={key="replaceScope";values={"first_n";"last_n";"after_pos";"after_char_n";"before_char_n"}} };
 		//需要「位置 / 字符」的范围
-		{ key="scopeParam2"; label="位置 / 字符"; kind="edit"; showIf={key="replaceScope";values={"after_pos";"after_char";"before_char";"after_char_n";"before_char_n"}} };
+		{ key="scopeParam2"; labelKey="sch.replace.scopeParam2"; kind="edit"; showIf={key="replaceScope";values={"after_pos";"after_char";"before_char";"after_char_n";"before_char_n"}} };
 		//始终显示在最后一行
-		{ key="newText"; label="替换为"; kind="edit" }
+		{ key="newText"; labelKey="sch.replace.newText"; kind="edit" }
 	};
 	//preset 行不是真正的规则参数，只是把常用正则填进 pattern 输入框的快捷方式：
 	//选中某一项后写入 target 指定的参数（第 1 项「自定义」不写入，保留手填的正则）。
 	//注意：aardio 双引号内是原样字符串，反斜杠按字面处理，所以正则可以直接写。
 	regex_replace = {
-		{ key="__preset"; label="常用正则"; kind="preset"; target="pattern";
-			texts={"（自定义）";"数字";"非数字";"字母";"中文字符";"空白";"8 位日期";"年-月-日";"括号内内容";"方括号内内容";"末尾数字"};
+		{ key="__preset"; labelKey="sch.regex.preset"; kind="preset"; target="pattern";
+			textKeys={"sch.regex.preset.custom";"sch.regex.preset.digits";"sch.regex.preset.nondigits";"sch.regex.preset.letters";"sch.regex.preset.chinese";"sch.regex.preset.space";"sch.regex.preset.date8";"sch.regex.preset.dateDash";"sch.regex.preset.inParen";"sch.regex.preset.inBracket";"sch.regex.preset.trailDigits"};
 			patterns={"";"\d+";"\D+";"[a-zA-Z]+";"[\x{4e00}-\x{9fa5}]+";"\s+";"\d{8}";"\d{4}-\d{2}-\d{2}";"\([^)]*\)";"\[[^\]]*\]";"\d+$"} };
-		{ key="pattern"; label="正则表达式"; kind="edit" };
-		{ key="replacement"; label="替换为"; kind="edit" };
-		{ key="caseSensitive"; label="区分大小写"; kind="bool" }
+		{ key="pattern"; labelKey="sch.regex.pattern"; kind="edit" };
+		{ key="replacement"; labelKey="sch.regex.replacement"; kind="edit" };
+		{ key="caseSensitive"; labelKey="sch.regex.caseSensitive"; kind="bool" }
 	};
 	case_convert = {
-		{ key="caseType"; label="转换方式"; kind="combo";
-			texts={"全部大写";"全部小写";"首字母大写";"标题格式"};
+		{ key="caseType"; labelKey="sch.case.type"; kind="combo";
+			textKeys={"sch.case.upper";"sch.case.lower";"sch.case.first";"sch.case.title"};
 			values={"upper";"lower";"first";"title"} }
 	};
 	sequence = {
-		{ key="start"; label="起始值"; kind="edit" };
-		{ key="step"; label="步长"; kind="edit" };
-		{ key="digits"; label="位数（补零）"; kind="edit" };
-		{ key="position"; label="位置"; kind="combo"; texts={"末尾";"开头"}; values={"end";"start"} }
+		{ key="start"; labelKey="sch.seq.start"; kind="edit" };
+		{ key="step"; labelKey="sch.seq.step"; kind="edit" };
+		{ key="digits"; labelKey="sch.seq.digits"; kind="edit" };
+		{ key="position"; labelKey="sch.seq.position"; kind="combo"; textKeys={"sch.seq.pos.end";"sch.seq.pos.start"}; values={"end";"start"} }
 	};
 	date_time = {
-		{ key="format"; label="格式"; kind="combo";
+		{ key="format"; labelKey="sch.date.format"; kind="combo";
 			texts={"20060102";"2006-01-02";"200601021504"};
 			values={"20060102";"2006-01-02";"200601021504"} };
-		{ key="position"; label="位置"; kind="combo"; texts={"末尾";"开头"}; values={"end";"start"} };
-		{ key="useFileTime"; label="使用文件修改时间"; kind="bool" }
+		{ key="position"; labelKey="sch.date.position"; kind="combo"; textKeys={"sch.date.pos.end";"sch.date.pos.start"}; values={"end";"start"} };
+		{ key="useFileTime"; labelKey="sch.date.useFileTime"; kind="bool" }
 	}
 };
 
 //模拟文件名：只存在于内存中，不代表磁盘上的真实文件
-var MOCK_FILES = { "photo.jpg"; "holiday.png"; "报告.txt"; "archive.tar.gz"; ".gitignore" };
+var MOCK_FILES = { "photo.jpg"; "holiday.png"; "report.txt"; "archive.tar.gz"; ".gitignore" };
 
 //固定测试时间（Unix 秒）：2026-01-02 15:04:05 本地时区
 //模拟数据不提供修改时间，因此日期时间规则一律使用这个时间，保证预览可复现
@@ -276,8 +286,8 @@ var setStatus = function(text){
 
 var typeText = function(t){
 	if(type(t) != "string") return "";
-	var s = RULE_TYPE_TEXTS[t];
-	if(type(s) == "string") return s;
+	var k = RULE_TYPE_TEXTS[t];
+	if(type(k) == "string") return T(k);
 	return t;
 }
 
@@ -437,8 +447,10 @@ var applyLayout = function(cx,cy){
 	var previewTop = execBtnY + fileBtnH + g8y;
 	winform.lvPreview.setPos(rightX,previewTop,rightW,statusTop - g8y - previewTop);
 
-	//底部
-	winform.lblStatus.setPos(mX,statusTop,cx - mX * 2,statusH);
+	//底部：状态栏 + 右侧语言切换
+	var langW = 92 * dpiX;
+	winform.lblStatus.setPos(mX,statusTop,cx - mX * 2 - langW - 8 * dpiX,statusH);
+	winform.cmbLang.setPos(cx - mX - langW,statusTop,langW,statusH);
 }
 
 //---------- 规则列表 ----------
@@ -457,7 +469,7 @@ var rebuildRuleList = function(){
 	for(i=1;#rules;1){
 		var r = rules[i];
 		winform.lvRules.addItem({
-			text = { tostring(i); typeText(r.type); frename.rules.description(r); r.enabled ? "启用" : "禁用" };
+			text = { tostring(i); typeText(r.type); frename.rules.description(r); r.enabled ? T("ruleState.enabled") : T("ruleState.disabled") };
 		});
 	}
 
@@ -477,7 +489,7 @@ var rebuildRuleList = function(){
 var updateRuleRow = function(i){
 	var r = rules[i];
 	if(type(r) != "table") return;
-	winform.lvRules.setItemText({ tostring(i); typeText(r.type); frename.rules.description(r); r.enabled ? "启用" : "禁用" }, i);
+	winform.lvRules.setItemText({ tostring(i); typeText(r.type); frename.rules.description(r); r.enabled ? T("ruleState.enabled") : T("ruleState.disabled") }, i);
 }
 
 //---------- 参数面板 ----------
@@ -520,6 +532,20 @@ var visibleSchema = function(rule){
 	return out;
 }
 
+//取某个参数定义在当前语言下的下拉选项文本。
+//优先用 i18n 键（textKeys）；没有键就直接用字面数组（例如日期格式这类数据）。
+var textsOf = function(def){
+	var out = {};
+	if(type(def.textKeys) == "table"){
+		for(i=1;#def.textKeys;1){
+			..table.push(out, T(def.textKeys[i]));
+		}
+		return out;
+	}
+	if(type(def.texts) == "table") return def.texts;
+	return out;
+}
+
 //把当前选中规则的参数填进面板
 var showParams = function(){
 	var rule = rules[selRule];
@@ -540,7 +566,7 @@ var showParams = function(){
 		var def = schema[i];
 
 		if(type(def) == "table"){
-			lblParams_[i].text = def.label;
+			lblParams_[i].text = T(def.labelKey);
 			lblParams_[i].visible = true;
 
 			if(def.kind == "edit"){
@@ -551,13 +577,13 @@ var showParams = function(){
 			elseif(def.kind == "bool"){
 				editParams[i].visible = false;
 				comboParams[i].visible = true;
-				comboParams[i].items = { "否"; "是" };
+				comboParams[i].items = { T("bool.no"); T("bool.yes") };
 				comboParams[i].selIndex = params[def.key] ? 2 : 1;
 			}
 			elseif(def.kind == "preset"){
 				editParams[i].visible = false;
 				comboParams[i].visible = true;
-				comboParams[i].items = def.texts;
+				comboParams[i].items = textsOf(def);
 
 				//当前正则命中哪个常用项就选中它，都没命中则显示第 1 项「自定义」
 				var idx = 1;
@@ -570,7 +596,7 @@ var showParams = function(){
 			else {
 				editParams[i].visible = false;
 				comboParams[i].visible = true;
-				comboParams[i].items = def.texts;
+				comboParams[i].items = textsOf(def);
 
 				var idx = 1;
 				for(k=1;#def.values;1){
@@ -741,14 +767,14 @@ var refreshPreview = function(){
 	if(errText){
 		winform.lvPreview.clear();
 		lastPreviewRows = {};
-		setStatus("预览失败（引擎异常，界面未崩溃）：" ++ errText);
+		setStatus(T("preview.failEngine", errText));
 		return;
 	}
 
 	if(type(res) != "table"){
 		winform.lvPreview.clear();
 		lastPreviewRows = {};
-		setStatus("预览失败：引擎没有返回结果");
+		setStatus(T("preview.failEmpty"));
 		return;
 	}
 
@@ -773,11 +799,11 @@ var refreshPreview = function(){
 		var it = items[i];
 
 		var statusText;
-		if(it.status == "error") statusText = "错误";
-		elseif(it.status == "warning") statusText = "有风险";
-		elseif(it.status == "ok") statusText = "可改名";
-		elseif(it.changed) statusText = "已变化";
-		else statusText = "未变化";
+		if(it.status == "error") statusText = T("status.error");
+		elseif(it.status == "warning") statusText = T("status.warning");
+		elseif(it.status == "ok") statusText = T("status.ok");
+		elseif(it.changed) statusText = T("status.changed");
+		else statusText = T("status.unchanged");
 
 		var reason = ..frename.precheck.reasonText(it);
 		if(!#reason && it.error) reason = tostring(it.error);
@@ -797,21 +823,15 @@ var refreshPreview = function(){
 	lastPreviewRows = items;
 
 	//状态栏统计
-	var head = "规则 " ++ #rules ++ " 条（启用 " ++ countEnabled() ++ " 条）";
+	var head = T("stat.rules", #rules, countEnabled());
 
 	if(isReal){
 		var st = ..frename.precheck.statistics(items);
-		head = head ++ " ｜ 真实文件 " ++ st.total ++ " 个"
-			++ "：可改名 " ++ st.ok
-			++ "，未变化 " ++ st.unchanged
-			++ "，有风险 " ++ st.risky
-			++ "（错误 " ++ st.error ++ " / 警告 " ++ st.warning ++ "）"
-			++ " ｜ 执行前需重新检查";
+		head = head ++ T("stat.real", st.total, st.ok, st.unchanged, st.risky, st.error, st.warning);
 	}
 	else {
 		var st2 = frename.statistics(res);
-		head = head ++ " ｜ 模拟预览 " ++ st2.totalFiles ++ " 项：变化 " ++ st2.changedFiles
-			++ "，未变化 " ++ st2.unchangedFiles ++ "，错误 " ++ st2.errorFiles;
+		head = head ++ T("stat.mock", st2.totalFiles, st2.changedFiles, st2.unchangedFiles, st2.errorFiles);
 	}
 
 	setStatus(head);
@@ -850,6 +870,69 @@ var refreshPreviewLater = function(){
 	}
 
 	previewTimer = tid;
+}
+
+//---------- 语言切换 ----------
+
+//按当前语言重新铺一遍全部界面文案。
+//切换语言后调用它：控件文本、列表列名、规则类型下拉、说明区，
+//以及规则列表「说明」列（来自 frename.rules.description）与预览都会一起更新。
+var applyLanguage = function(){
+	winform.text = T("app.title");
+
+	winform.lblRules.text = T("lbl.rules");
+	winform.btnAdd.text = T("btn.add");
+	winform.btnUp.text = T("btn.up");
+	winform.btnDown.text = T("btn.down");
+	winform.btnDelete.text = T("btn.delete");
+	winform.chkEnabled.text = T("chk.enabled");
+	winform.lblParams.text = T("lbl.params");
+	winform.lblPreview.text = T("lbl.preview");
+	winform.btnLoadFiles.text = T("btn.loadFiles");
+	winform.btnLoadDir.text = T("btn.loadDir");
+	winform.btnClearFiles.text = T("btn.clearFiles");
+	winform.btnExecute.text = T("btn.execute");
+	winform.btnUndo.text = T("btn.undo");
+
+	//列表列名
+	winform.lvRules.columns = {
+		{T("col.rules.no"),34,2/*_LVCFMT_CENTER*/};
+		{T("col.rules.type"),90,0/*_LVCFMT_LEFT*/};
+		{T("col.rules.desc"),236,0/*_LVCFMT_LEFT*/};
+		{T("col.rules.status"),80,2/*_LVCFMT_CENTER*/}
+	};
+	winform.lvPreview.columns = {
+		{T("col.prev.orig"),110,0/*_LVCFMT_LEFT*/};
+		{T("col.prev.target"),110,0/*_LVCFMT_LEFT*/};
+		{T("col.prev.status"),60,2/*_LVCFMT_CENTER*/};
+		{T("col.prev.note"),170,0/*_LVCFMT_LEFT*/};
+		{T("col.prev.srcPath"),240,0/*_LVCFMT_LEFT*/};
+		{T("col.prev.dstPath"),240,0/*_LVCFMT_LEFT*/}
+	};
+
+	//规则类型下拉
+	var typeItems = {};
+	for(i=1;#RULE_TYPES;1){
+		..table.push(typeItems, T(RULE_TYPES[i].textKey));
+	}
+	winform.cmbRuleType.items = typeItems;
+	if(!winform.cmbRuleType.selIndex) winform.cmbRuleType.selIndex = 1;
+
+	//左下说明区：换行必须用单引号（编译时转义字符串），
+	//双引号里的 \r\n 是 4 个字面字符，static 控件不会当成换行
+	winform.lblHint.text = T("hint.title")
+		++ '\r\n' ++ "1. " ++ T("hint.1")
+		++ '\r\n' ++ "2. " ++ T("hint.2")
+		++ '\r\n' ++ "3. " ++ T("hint.3")
+		++ '\r\n' ++ "4. " ++ T("hint.4")
+		++ '\r\n' ++ "5. " ++ T("hint.5")
+		++ '\r\n' ++ "6. " ++ T("hint.6", string.join(MOCK_FILES,", "))
+		++ '\r\n' ++ T("hint.6b", tostring(TEST_TIME,"%Y-%m-%d %H:%M:%S"));
+
+	//说明列来自规则引擎、状态列与统计来自预检，都要重刷
+	rebuildRuleList();
+	showParams();
+	refreshPreview();
 }
 
 //---------- 执行与撤销 ----------
@@ -916,8 +999,8 @@ var executeRename = function(){
 	var doExecute = function(){
 		//1. 必须先加载真实文件（模拟数据没有真实路径，不能执行）
 		if(!#realFiles){
-			setStatus("请先加载文件或文件夹");
-			winform.msgbox('还没有加载任何文件。\r\n请先点「加载文件」或「加载文件夹」。',"无法执行",0);
+			setStatus(T("exec.needFiles"));
+			winform.msgbox(T("exec.needFilesBox"), T("dlg.cannotExecute"), 0);
 			return;
 		}
 
@@ -928,7 +1011,7 @@ var executeRename = function(){
 			res = frename.preview(buildPreviewFiles(), rules, time());
 		}
 		catch(e){
-			setStatus("预览失败（引擎异常，界面未崩溃）：" ++ tostring(e));
+			setStatus(T("preview.failEngine", tostring(e)));
 			return;
 		}
 
@@ -938,30 +1021,30 @@ var executeRename = function(){
 		var vr = frename.validate.check(plan, fs.existsFunc);
 
 		if(!vr.ok){
-			var msg = '校验未通过，不能执行：\r\n\r\n';
+			var msg = T("exec.validateHead");
 			for(i=1;#vr.errors;1){
 				msg = msg ++ "· " ++ tostring(vr.errors[i].reason) ++ '\r\n';
 			}
-			winform.msgbox(msg,"校验未通过",0);
-			setStatus("校验未通过：错误 " ++ #vr.errors ++ " 条，未执行任何操作");
+			winform.msgbox(msg, T("dlg.validationFailed"), 0);
+			setStatus(T("exec.validateStatus", #vr.errors));
 			return;
 		}
 
 		//4. 用户确认
-		var confirmMsg = "即将重命名 " ++ #plan.operations ++ " 个文件。";
-		if(#vr.warnings) confirmMsg = confirmMsg ++ '\r\n注意：有 ' ++ #vr.warnings ++ " 条警告。";
-		if(#plan.blocked) confirmMsg = confirmMsg ++ '\r\n有 ' ++ #plan.blocked ++ " 项不执行。";
-		confirmMsg = confirmMsg ++ '\r\n\r\n确定执行吗？';
+		var confirmMsg = T("exec.confirm", #plan.operations);
+		if(#vr.warnings) confirmMsg = confirmMsg ++ T("exec.confirmWarn", #vr.warnings);
+		if(#plan.blocked) confirmMsg = confirmMsg ++ T("exec.confirmBlocked", #plan.blocked);
+		confirmMsg = confirmMsg ++ T("exec.confirmAsk");
 
-		if(winform.msgbox(confirmMsg,"确认执行重命名",1) != 1){
-			setStatus("已取消执行");
+		if(winform.msgbox(confirmMsg, T("dlg.confirmRename"), 1) != 1){
+			setStatus(T("exec.cancelled"));
 			return;
 		}
 
 		//5. 执行放进后台线程，UI 线程不卡（thread.invokeAndWait 等待时仍处理界面消息）。
 		//   plan 是纯数据表，按 aardio 的线程间序列化传值；fs 在后线程里 import 创建，
 		//   函数不走序列化。执行期间用户仍可拖动窗口、操作界面。
-		setStatus("正在执行重命名，请稍候…");
+		setStatus(T("exec.running"));
 		winform.lblStatus.update();
 
 		var execRes, execErr;
@@ -981,13 +1064,13 @@ var executeRename = function(){
 		}
 
 		if(execErr){
-			setStatus("执行过程异常：" ++ execErr);
-			winform.msgbox("执行过程出现异常：\r\n\r\n" ++ execErr,"执行结果",0);
+			setStatus(T("exec.errorStatus", execErr));
+			winform.msgbox(T("exec.errorBox", execErr), T("dlg.execResult"), 0);
 			return;
 		}
 
 		//6. 记入历史（UI 线程）
-		var session = opHistory.addSession(execRes, "手动执行重命名");
+		var session = opHistory.addSession(execRes, T("hist.manualRename"));
 
 		//7. 全部成功才把列表同步到新文件名
 		if(execRes.success){
@@ -997,23 +1080,19 @@ var executeRename = function(){
 		refreshPreview();
 
 		//8. 结果：成功数 / 失败数 / 是否可撤销
-		var undoText = "不可撤销";
-		if(session && session.undoable) undoText = "可撤销";
+		var undoText = T("undo.notUndoable");
+		if(session && session.undoable) undoText = T("undo.undoable");
 
 		if(execRes.success){
-			setStatus("执行成功：成功 " ++ #plan.operations ++ " 个文件，未执行 " ++ #plan.blocked ++ " 项，" ++ undoText);
-			winform.msgbox("执行成功。" ++ '\r\n\r\n成功步骤：' ++ #execRes.executed
-				++ '\r\n失败步骤：0'
-				++ '\r\n未执行项：' ++ #plan.blocked
-				++ '\r\n是否可撤销：' ++ undoText,"执行结果",0);
+			setStatus(T("exec.successStatus", #plan.operations, #plan.blocked, undoText));
+			winform.msgbox(T("exec.successBox", #execRes.executed, #plan.blocked, undoText),
+				T("dlg.execResult"), 0);
 		}
 		else {
-			setStatus("执行失败：" ++ execRes.message);
-			winform.msgbox("执行失败。" ++ '\r\n\r\n成功步骤：' ++ #execRes.executed
-				++ '\r\n失败步骤：1'
-				++ '\r\n失败原因：' ++ execRes.failedStep.reason
-				++ '\r\n已自动恢复：' ++ (execRes.rollbackOk ? "是" : "否")
-				++ '\r\n是否可撤销：' ++ undoText,"执行结果",0);
+			setStatus(T("exec.failStatus", execRes.message));
+			winform.msgbox(T("exec.failBox", #execRes.executed, execRes.failedStep.reason,
+				(execRes.rollbackOk ? T("bool.yes") : T("bool.no")), undoText),
+				T("dlg.execResult"), 0);
 		}
 	};
 
@@ -1036,18 +1115,18 @@ var undoLast = function(){
 		var session = opHistory.getLastUndoable();
 
 		if(!session){
-			setStatus("没有可撤销的操作");
-			winform.msgbox("当前没有可撤销的操作。","无法撤销",0);
+			setStatus(T("undo.none"));
+			winform.msgbox(T("undo.noneBox"), T("dlg.cannotUndo"), 0);
 			return;
 		}
 
-		if(winform.msgbox('将撤销该次操作。\r\n\r\n' ++ session.message ++ '\r\n\r\n确定撤销吗？',"确认撤销",1) != 1){
-			setStatus("已取消撤销");
+		if(winform.msgbox(T("undo.confirm", session.message), T("dlg.confirmUndo"), 1) != 1){
+			setStatus(T("undo.cancelled"));
 			return;
 		}
 
 		//撤销也放进后台线程，UI 不卡
-		setStatus("正在撤销，请稍候…");
+		setStatus(T("undo.running"));
 		winform.lblStatus.update();
 
 		var rb, rbErr;
@@ -1067,8 +1146,8 @@ var undoLast = function(){
 		}
 
 		if(rbErr){
-			setStatus("撤销过程异常：" ++ rbErr);
-			winform.msgbox("撤销过程出现异常：\r\n\r\n" ++ rbErr,"撤销结果",0);
+			setStatus(T("undo.errorStatus", rbErr));
+			winform.msgbox(T("undo.errorBox", rbErr), T("dlg.undoResult"), 0);
 			return;
 		}
 
@@ -1076,8 +1155,8 @@ var undoLast = function(){
 			//部分失败：如实报告，并标记为已撤销，避免反复尝试同一批次
 			opHistory.markUndone(session.id);
 			refreshPreview();
-			setStatus("撤销未完全成功：失败 " ++ #rb.failed ++ " 步");
-			winform.msgbox("撤销未完全成功，失败 " ++ #rb.failed ++ ' 步。\r\n请手动检查文件状态。',"撤销结果",0);
+			setStatus(T("undo.partialStatus", #rb.failed));
+			winform.msgbox(T("undo.partialBox", #rb.failed), T("dlg.undoResult"), 0);
 			return;
 		}
 
@@ -1093,8 +1172,8 @@ var undoLast = function(){
 
 		refreshPreview();
 
-		setStatus("撤销成功：已恢复 " ++ rb.doneCount ++ " 步");
-		winform.msgbox("撤销成功，已恢复 " ++ rb.doneCount ++ " 步。","撤销结果",0);
+		setStatus(T("undo.okStatus", rb.doneCount));
+		winform.msgbox(T("undo.okBox", rb.doneCount), T("dlg.undoResult"), 0);
 	};
 
 	doUndo();
@@ -1117,12 +1196,12 @@ var addRule = function(){
 	rebuildRuleList();
 	showParams();
 	refreshPreview();
-	setStatus("已添加规则：" ++ RULE_TYPES[si].text);
+	setStatus(T("rule.added", T(RULE_TYPES[si].textKey)));
 }
 
 var deleteRule = function(){
 	if(!selRule){
-		setStatus("请先选择一条规则");
+		setStatus(T("rule.selectFirst"));
 		return;
 	}
 
@@ -1134,18 +1213,18 @@ var deleteRule = function(){
 	rebuildRuleList();
 	showParams();
 	refreshPreview();
-	setStatus("已删除规则：" ++ text);
+	setStatus(T("rule.deleted", text));
 }
 
 var moveRule = function(delta){
 	if(!selRule){
-		setStatus("请先选择一条规则");
+		setStatus(T("rule.selectFirst"));
 		return;
 	}
 
 	var j = selRule + delta;
 	if(j < 1 || j > #rules){
-		setStatus("已经到边界了，无法再移动");
+		setStatus(T("rule.atBoundary"));
 		return;
 	}
 
@@ -1157,7 +1236,7 @@ var moveRule = function(delta){
 	rebuildRuleList();
 	showParams();
 	refreshPreview();
-	setStatus("已移动规则，当前位置 " ++ selRule);
+	setStatus(T("rule.moved", selRule));
 }
 
 //---------- 事件绑定 ----------
@@ -1192,12 +1271,12 @@ var mergeScanResult = function(result,scopeText){
 
 	refreshPreview();
 
-	var msg = scopeText ++ "：新增 " ++ added ++ " 个，当前共 " ++ #realFiles ++ " 个";
-	if(result.dupCount) msg = msg ++ "，重复跳过 " ++ result.dupCount ++ " 个";
+	var msg = T("scan.summary", scopeText, added, #realFiles);
+	if(result.dupCount) msg = msg ++ T("scan.dup", result.dupCount);
 
 	//访问失败不能静默跳过：把失败项也列出来，写清路径与原因
 	if(#result.errors){
-		msg = msg ++ "，失败 " ++ #result.errors ++ " 个";
+		msg = msg ++ T("scan.failed", #result.errors);
 
 		for(i=1;#result.errors;1){
 			var e = result.errors[i];
@@ -1210,7 +1289,7 @@ var mergeScanResult = function(result,scopeText){
 				targetPath = "";
 			});
 			winform.lvPreview.addItem({
-				text = { "(读取失败)"; ""; "错误"; e.reason; e.path; "" };
+				text = { T("lv.readFailed"); ""; T("status.error"); e.reason; e.path; "" };
 			});
 		}
 	}
@@ -1220,27 +1299,27 @@ var mergeScanResult = function(result,scopeText){
 
 winform.btnLoadFiles.oncommand = function(id,event){
 	//多选文件：返回路径数组，取消返回 null
-	var paths = fsys.dlg.openMulti("所有文件|*.*|","选择要重命名的文件（可多选）");
+	var paths = fsys.dlg.openMulti(T("files.filter"), T("files.pickTitle"));
 	if(type(paths) != "table" || !#paths) return;
 
-	mergeScanResult( frename.filescan.scan(paths,fileKeys), "已选择 " ++ #paths ++ " 个文件" );
+	mergeScanResult( frename.filescan.scan(paths,fileKeys), T("files.selectedFiles", #paths) );
 }
 
 winform.btnLoadDir.oncommand = function(id,event){
 	//多选文件夹：返回路径数组，取消返回 null
-	var dirs = fsys.dlg.dirs(,,"选择文件夹（可多选，仅扫描直接子文件，不递归）");
+	var dirs = fsys.dlg.dirs(,, T("dirs.pickTitle"));
 	if(type(dirs) != "table" || !#dirs) return;
 
 	//文件夹本身不作为待重命名文件，只取其直接子文件
 	mergeScanResult( frename.filescan.scan(dirs,fileKeys),
-		"已选择 " ++ #dirs ++ " 个文件夹（仅直接子文件，不递归）" );
+		T("files.selectedDirs", #dirs) );
 }
 
 winform.btnClearFiles.oncommand = function(id,event){
 	realFiles = {};
 	fileKeys = {};
 	refreshPreview();
-	setStatus("已清空文件列表，恢复为内存模拟数据预览");
+	setStatus(T("files.cleared"));
 }
 
 winform.btnExecute.oncommand = function(id,event){
@@ -1251,11 +1330,23 @@ winform.btnUndo.oncommand = function(id,event){
 	undoLast();
 }
 
+//切换语言：改当前语言后重铺全部文案
+winform.cmbLang.onSelChange = function(){
+	var i = winform.cmbLang.selIndex;
+	if(!i) return;
+
+	var code = ..frename.i18n.LANGS[i];
+	if(!..frename.i18n.setLang(code)) return;
+
+	applyLanguage();
+	setStatus(T("lbl.status.ready"));
+}
+
 //双击预览行：在状态栏显示该行完整路径，避免列宽不够看不全
 winform.lvPreview.onDoubleClick = function(item,subItem,nm){
 	var it = lastPreviewRows[item];
 	if(type(it) != "table") return;
-	setStatus("原始：" ++ tostring(it.sourcePath) ++ "  →  目标：" ++ tostring(it.targetPath));
+	setStatus(T("preview.dblclick", tostring(it.sourcePath), tostring(it.targetPath)));
 }
 
 winform.chkEnabled.oncommand = function(id,event){
@@ -1264,7 +1355,7 @@ winform.chkEnabled.oncommand = function(id,event){
 	var rule = rules[selRule];
 	if(type(rule) != "table"){
 		//选中状态和记录不一致时，先把界面同步回来再提示
-		setStatus("请先选择一条规则");
+		setStatus(T("rule.selectFirst"));
 		return;
 	}
 
@@ -1434,26 +1525,20 @@ for(i=1;PARAM_ROWS;1){
 
 //---------- 初始化 ----------
 
-var typeItems = {};
-for(i=1;#RULE_TYPES;1){
-	table.push(typeItems, RULE_TYPES[i].text);
+//语言下拉：直接显示语言代码（en / zh），选中当前语言
+var langItems = {};
+for(i=1;#..frename.i18n.LANGS;1){
+	..table.push(langItems, ..frename.i18n.LANGS[i]);
 }
-winform.cmbRuleType.items = typeItems;
-winform.cmbRuleType.selIndex = 1;
+winform.cmbLang.items = langItems;
+for(i=1;#..frename.i18n.LANGS;1){
+	if(..frename.i18n.LANGS[i] == ..frename.i18n.getLang()) winform.cmbLang.selIndex = i;
+}
+if(!winform.cmbLang.selIndex) winform.cmbLang.selIndex = 1;
 
-//说明文字必须用单引号（编译时转义字符串）写换行符，
-//双引号里的 "\r\n" 是 4 个字面字符，static 控件不会把它当成换行。
-winform.lblHint.text = "说明："
-	++ '\r\n' ++ "1. 本程序只扫描与预检，不会修改、移动或重命名任何真实文件。"
-	++ '\r\n' ++ "2. 未加载文件时使用内存模拟数据预览。"
-	++ '\r\n' ++ "3. 选择文件夹只扫描它的直接子文件，不递归子文件夹。"
-	++ '\r\n' ++ "4. 预检结果仅供参考，执行前需重新检查。"
-	++ '\r\n' ++ "5. 双击预览行可在状态栏查看该行完整路径。"
-	++ '\r\n' ++ "6. 模拟数据：" ++ string.join(MOCK_FILES,"、")
-	++ '\r\n' ++ "（模拟预览用固定时间 " ++ tostring(TEST_TIME,"%Y-%m-%d %H:%M:%S") ++ "）。";
-
-showParams();
-refreshPreview();
+//按当前语言铺一遍全部界面文案
+//（含控件文本、列表列名、规则类型下拉、说明区，并重建规则列表与预览）
+applyLanguage();
 
 //窗口缩放时重排；onSize 即 adjust 事件，参数是客户区宽高
 winform.onSize = function(cx,cy,wParam){
