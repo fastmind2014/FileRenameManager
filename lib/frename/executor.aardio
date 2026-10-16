@@ -7,7 +7,7 @@
 // 所有文件操作都通过调用方注入的 moveFunc / existsFunc / deleteFunc 完成：
 //   existsFunc(path)            该路径当前是否存在
 //   moveFunc(from,to)           移动/改名，成功返回 true
-//   deleteFunc(path)            删除，成功返回 true（仅撤销时清理残留用）
+//   deleteFunc(path)            删除，成功返回 true（rollback 不再调用它：撤销时绝不删除文件）
 // 测试里可以全部用内存中的假实现；界面上也可以先接模拟实现再接真实实现。
 // 本模块不创建、修改、移动、删除或重命名任何真实文件。
 //
@@ -153,15 +153,22 @@ namespace frename.executor{
 			var e = executionLog[i];
 			if(type(e) != "table") continue;
 
-			//要恢复成 e.from。若该路径当前竟然存在（残留或外部新建的文件），
-			//先删除它，否则移动会失败；删除失败就记录并跳过这一步。
-			if(c.existsFunc(e.from)){
-				if(!c.deleteFunc(e.from)){
-					..table.push(r.failed,{ step=e; reason=..frename.i18n.t("exec.undoDeleteFail", e.from) });
-					continue;
-				}
+			var fromExists = c.existsFunc(e.from);
+			var toExists = c.existsFunc(e.to);
+
+			//已撤销：e.from 已存在、e.to 已不存在，说明这条早已恢复
+			//（例如自动回滚已把它改回原名，用户随后又手动 Undo 一次）。
+			//必须直接跳过，绝不能删除 e.from——否则会把已恢复的原始文件误当“残留”删掉，造成数据丢失。
+			if(fromExists && !toExists){
+				r.doneCount = r.doneCount + 1;
+				continue;
 			}
 
+			//其余情况一律交给 moveFunc(e.to -> e.from)：
+			//   e.from 不在、e.to 在：正常撤销。
+			//   e.from 不在、e.to 不在：moveFunc 因来源缺失而失败（沿用 undoMoveFail 原因）。
+			//   e.from 在、e.to 也在：moveFunc 因目标已存在而失败，且不覆盖、不删除任何文件（安全失败）。
+			//这里绝不为了继续撤销而 deleteFunc(e.from)——那会误删文件。
 			if(!c.moveFunc(e.to,e.from)){
 				..table.push(r.failed,{ step=e; reason=..frename.i18n.t("exec.undoMoveFail", e.to, e.from) });
 				continue;

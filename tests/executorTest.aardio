@@ -9,7 +9,8 @@
 // 覆盖场景：
 //   正常批量改名 / A→B B→C / A→B B→A（交换）
 //   中途（阶段2）失败自动恢复 / 临时（阶段1）失败自动恢复
-//   undo 正确性 / 撤销时清理残留 / 未注入 moveFunc 时不动作
+//   undo 正确性 / 撤销时两者并存则安全失败不删文件 / 部分回滚后再次 rollback 不删已恢复文件
+//   / 未注入 moveFunc 时不动作
 
 import console;
 import frename.filescan;
@@ -206,20 +207,30 @@ expect( fs6.has('C:\\t\\a.txt') && fs6.has('C:\\t\\b.txt') && fs6.has('C:\\t\\c.
 expect( !fs6.has('C:\\t\\x.txt') && !fs6.has('C:\\t\\y.txt') && !fs6.has('C:\\t\\z.txt'),
 	"E6f","undo 后三个目标文件都应消失" );
 
-//================ 七、撤销时清理残留（覆盖 deleteFunc）=================
+//================ 七、撤销时两者并存则安全失败（不删除、不覆盖）=================
+//真实场景：撤销某一步时，e.from（原始名）被外部程序重新创建，同时 e.to（改名后的文件）仍在。
+//这时无法在不删除任意文件的前提下安全恢复，必须失败并保留两个文件，
+//绝不能为了继续 Undo 而删除 e.from 或覆盖它。
 
 var res7 = frename.executor.executePlan(plan6, fs6);
 expect( res7.success, "E7a","再次执行应成功", res7.message );
 
-//模拟残留：a.txt 本应已被移走，却被外部程序重新创建了
+//执行后：x/y/z 存在，a/b/c 已被移走。先清零删除计数，便于断言“撤销不删文件”。
+fs6.deleteCount = 0;
+
+//模拟“两者都存在”：a.txt 被外部重新创建，而由它改来的 x.txt 仍在
 fs6.files[[ ..frename.filescan.pathKey('C:\\t\\a.txt') ]] = 'C:\\t\\a.txt';
 
 var rb7 = frename.executor.rollback(res7.executed, fs6);
 
-expect( rb7.ok, "E7b","存在残留时 undo 仍应成功" );
-expect( fs6.deleteCount > 0, "E7c","撤销前应先删除残留文件",
+//a→x 这一步两者都存在，无法安全恢复 -> 整体报告未完全成功
+expect( !rb7.ok, "E7b","两者都存在时应报告撤销未完全成功" );
+//绝不为了继续撤销而删除任何已存在的文件
+expect( fs6.deleteCount == 0, "E7c","两者都存在时不得删除任何文件",
 	"deleteCount=" ++ fs6.deleteCount );
-expect( fs6.has('C:\\t\\a.txt'), "E7d","撤销后 a.txt 应恢复存在" );
+//两个文件都必须保留：外部重建的 a.txt 不被删，改名后的 x.txt 不被覆盖或移动
+expect( fs6.has('C:\\t\\a.txt'), "E7d","外部重建的 a.txt 必须保留" );
+expect( fs6.has('C:\\t\\x.txt'), "E7e","改名后的 x.txt 必须保留、不被覆盖或移动" );
 
 //================ 八、未注入 moveFunc 时不动作 =================
 
@@ -259,6 +270,45 @@ expect( #res10.rollbackFailed == 1, "E10d","应记录 1 步回滚失败",
 	"实际=" ++ #res10.rollbackFailed );
 expect( ..string.indexOf(res10.message,"自动恢复未完全成功"),
 	"E10e","结果摘要应说明自动恢复未完全成功" );
+
+//================ 十一、部分回滚后再次 rollback 不得删除已恢复的文件 =================
+//真实场景：A→B、C→D 执行成功；自动回滚把 B→A 恢复了，但另一步 C→D 的回滚失败
+//（rollbackOk=false，history 据此保留为可 undo）；用户随后再次 Undo。
+//关键：再次 rollback 处理已恢复的 A→B 时，A 已存在、B 已不在，必须判定为“已撤销”跳过，
+//绝不能 deleteFunc(A)——修复前会删掉 A 再尝试 B→A（失败），导致原始文件丢失。
+
+var fs11 = makeFs({ 'C:\\t\\a.txt'; 'C:\\t\\c.txt' });
+var plan11 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=true};
+	{sourcePath='C:\\t\\c.txt'; targetPath='C:\\t\\d.txt'; targetName="d.txt"; changed=true}
+}, fs11.existsFunc);
+var res11 = frename.executor.executePlan(plan11, fs11);
+
+expect( res11.success, "E11a","A→B、C→D 应执行成功", res11.message );
+expect( fs11.has('C:\\t\\b.txt') && fs11.has('C:\\t\\d.txt'),
+	"E11b","执行后应存在 b.txt 与 d.txt" );
+
+//模拟自动回滚：让“从 d.txt 移出”失败（即 C→D 的回滚 D→C 失败），而 B→A 的回滚可成功。
+//执行阶段没有从 d.txt 移出的步骤，故不影响执行。
+fs11.moveFailFrom = ..frename.filescan.pathKey('C:\\t\\d.txt');
+fs11.deleteCount = 0;
+
+var rb11a = frename.executor.rollback(res11.executed, fs11);
+expect( !rb11a.ok, "E11c","自动回滚应未完全成功（D→C 失败）" );
+expect( fs11.has('C:\\t\\a.txt') && !fs11.has('C:\\t\\b.txt'),
+	"E11d","自动回滚应已把 B→A 恢复（a.txt 在、b.txt 不在）" );
+expect( fs11.has('C:\\t\\d.txt') && !fs11.has('C:\\t\\c.txt'),
+	"E11e","另一步 C→D 回滚失败，应仍是 d.txt 在、c.txt 不在" );
+expect( fs11.deleteCount == 0, "E11f","自动回滚不应删除任何文件",
+	"deleteCount=" ++ fs11.deleteCount );
+
+//用户再次 Undo：对同一份日志第二次 rollback
+var rb11b = frename.executor.rollback(res11.executed, fs11);
+expect( fs11.has('C:\\t\\a.txt'), "E11g","再次 rollback 后已恢复的 a.txt 必须仍在（不得删除）" );
+expect( fs11.deleteCount == 0, "E11h","再次 rollback 不得删除已恢复的 a.txt",
+	"deleteCount=" ++ fs11.deleteCount );
+expect( !rb11b.ok, "E11i","再次 rollback 仍应如实报告 D→C 失败" );
+expect( !fs11.has('C:\\t\\b.txt'), "E11j","b.txt 不应被重新创建" );
 
 console.log("---------------------------------------------------------");
 console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
