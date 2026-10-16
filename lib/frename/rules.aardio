@@ -218,20 +218,26 @@ namespace frename.rules{
 			if(!#p2) return name;
 
 			stem,ext = ..frename.nameutil.splitExt(name);
-			idx = ..string.indexOf(stem,p2);
-			if(!idx) return name;					//未找到分隔符：原样返回
+			//统一用 charIndexOf 拿「字符索引」，与 after_char_n 口径一致。
+			//原来这里用 string.indexOf + string.left：indexOf 是字节口径，
+			//中文文件名下会取错位置。
+			ci = ..frename.nameutil.charIndexOf(stem,p2);
+			if(ci < 0) return name;					//未找到分隔符：原样返回
 
-			return ..string.left(stem, idx - 1 + #p2) ++ newText ++ ext;
+			//取「分隔符之前 + 分隔符本身」这段字符
+			return ..frename.nameutil.midChars(stem,0,ci + ..frename.nameutil.charCount(p2))
+				++ newText ++ ext;
 		}
 
 		if(scope == "before_char"){
 			if(!#p2) return name;
 
 			stem,ext = ..frename.nameutil.splitExt(name);
-			idx = ..string.indexOf(stem,p2);
-			if(!idx) return name;
+			ci = ..frename.nameutil.charIndexOf(stem,p2);
+			if(ci < 0) return name;
 
-			return newText ++ ..string.right(stem,-idx) ++ ext;
+			//取「分隔符及其之后」这段字符
+			return newText ++ ..frename.nameutil.tailChars(stem,ci) ++ ext;
 		}
 
 		if(scope == "after_char_n"){

@@ -36,9 +36,11 @@ namespace frename.precheck{
 		if(last == ".") return ..frename.i18n.t("check.trailingDot");
 
 		//保留设备名：去掉扩展名后再比较
-		var stem = name;
-		var p = ..string.indexOf(stem,".");
-		if(p) stem = ..string.left(stem,p-1);
+		//用字面拆分取第一个点之前的部分。
+		//不要用「string.indexOf + string.left」的组合：indexOf 返回字节位置，
+		//而 string.left 按字符计数，中文文件名会截错位置、导致保留名误判。
+		var stemParts = ..string.splitLiteral(name,".");
+		var stem = #stemParts ? stemParts[1] : name;
 
 		var up = ..string.upper(stem);
 		for(i=1;#..frename.precheck.RESERVED_NAMES;1){

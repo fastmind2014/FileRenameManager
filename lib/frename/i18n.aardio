@@ -28,7 +28,7 @@ namespace frename.i18n{
 	STRINGS = {
 	en = {
 		//窗体与控件
-		["app.title"] = "FileRenameManager - Rules & Preview";
+		["app.title"] = "FileRenameManager v{1}";
 		["lbl.rules"] = "Rules (applied top to bottom)";
 		["lbl.params"] = "Rule parameters:";
 		["lbl.preview"] = "Preview (in-memory sample data when no files loaded)";
@@ -299,8 +299,8 @@ namespace frename.i18n{
 		["scan.dup"] = ", {1} duplicate(s) skipped";
 		["scan.failed"] = ", {1} failed";
 
-		//双击预览行
-		["preview.dblclick"] = "Source: {1}  →  Target: {2}";
+		//单击预览行
+		["preview.row"] = "Source: {1}  →  Target: {2}";
 
 		//操作历史备注
 		["hist.manualRename"] = "Manual rename execution";
@@ -316,19 +316,20 @@ namespace frename.i18n{
 
 		//左下说明区
 		["hint.title"] = "Notes:";
-		["hint.1"] = "This tool only scans and pre-checks; it never modifies, moves or renames real files.";
-		["hint.2"] = "Uses in-memory sample data when no files are loaded.";
-		["hint.3"] = "Folders are scanned for direct child files only, no recursion.";
-		["hint.4"] = "Pre-check results are advisory; re-check before executing.";
-		["hint.5"] = "Double-click a preview row to see its full path in the status bar.";
-		["hint.6"] = "Sample data: {1}";
-		["hint.6b"] = "(Sample preview uses fixed time {1}).";
+		["hint.1"] = "Execute Rename really renames files on disk; check the preview first.";
+		["hint.2"] = "Execution is two-phase and auto-rolls back on failure; use Undo Last Operation to revert after success.";
+		["hint.3"] = "Uses in-memory sample data when no files are loaded.";
+		["hint.4"] = "Folders are scanned for direct child files only, no recursion.";
+		["hint.5"] = "Click a preview row to see its full path in the status bar.";
+		["hint.6"] = "Switch the UI language (en / zh) at the bottom right.";
+		["hint.7"] = "Sample data: {1}";
+		["hint.7b"] = "(Sample preview uses fixed time {1}).";
 	};
 
 	//---------- 中文 ----------
 
 	zh = {
-		["app.title"] = "FileRenameManager - 规则编辑与预览";
+		["app.title"] = "FileRenameManager v{1}";
 		["lbl.rules"] = "规则列表（自上而下依次应用）";
 		["lbl.params"] = "规则参数：";
 		["lbl.preview"] = "预览（未加载真实文件时为内存模拟数据）";
@@ -577,7 +578,7 @@ namespace frename.i18n{
 		["scan.dup"] = "，重复跳过 {1} 个";
 		["scan.failed"] = "，失败 {1} 个";
 
-		["preview.dblclick"] = "原始：{1}  →  目标：{2}";
+		["preview.row"] = "原始：{1}  →  目标：{2}";
 
 		["hist.manualRename"] = "手动执行重命名";
 
@@ -590,13 +591,14 @@ namespace frename.i18n{
 		["dlg.undoResult"] = "撤销结果";
 
 		["hint.title"] = "说明：";
-		["hint.1"] = "本程序只扫描与预检，不会修改、移动或重命名任何真实文件。";
-		["hint.2"] = "未加载文件时使用内存模拟数据预览。";
-		["hint.3"] = "选择文件夹只扫描它的直接子文件，不递归子文件夹。";
-		["hint.4"] = "预检结果仅供参考，执行前需重新检查。";
-		["hint.5"] = "双击预览行可在状态栏查看该行完整路径。";
-		["hint.6"] = "模拟数据：{1}";
-		["hint.6b"] = "（模拟预览用固定时间 {1}）。";
+		["hint.1"] = "「执行重命名」会真正修改磁盘上的文件名，执行前请先确认预览结果。";
+		["hint.2"] = "执行分两阶段进行，失败会自动回滚；成功后可用「撤销上一次操作」还原。";
+		["hint.3"] = "未加载文件时使用内存模拟数据预览。";
+		["hint.4"] = "选择文件夹只扫描它的直接子文件，不递归子文件夹。";
+		["hint.5"] = "单击预览行可在状态栏查看该行完整路径。";
+		["hint.6"] = "右下角可切换界面语言（en / zh）。";
+		["hint.7"] = "模拟数据：{1}";
+		["hint.7b"] = "（模拟预览用固定时间 {1}）。";
 	}
 	};
 
@@ -637,19 +639,16 @@ namespace frename.i18n{
 
 		if(#args){
 			for(i=1;#args;1){
-				//手动替换占位符 {1} {2} …
-				//不用 string.replace：它的查找串按「模式串」解析，而 {1} 的花括号
-				//是量词语法，会让替换出现异常、把路径等内容改坏。
-				//这里用 string.indexOf 字面查找 + 切片拼接，语义确定。
-				//indexOf / left / right 三者都按字节计数，互相一致。
-				var ph = "{" ++ i ++ "}";
-				var v = tostring(args[i]);
-				var p = ..string.indexOf(s, ph);
-
-				while(p){
-					s = ..string.left(s,p-1) ++ v ++ ..string.right(s, -(p + #ph - 1));
-					p = ..string.indexOf(s, ph);
-				}
+				//占位符替换必须用 replaceLiteral（字面替换）：
+				//
+				//1. 不能用 string.replace —— 它的查找串按「模式串」解析，
+				//   而 {1} 的花括号正是量词语法，会让替换异常、把文案改坏。
+				//2. 也不能用 indexOf + left/right 手工拼接 —— indexOf 返回字节位置，
+				//   而 left/right 默认按字符计数；含中文的文案（如「规则 {1} 条」）
+				//   两者口径不一致，会切错位置、只替换掉一部分，残留的 "}" 漏到界面上。
+				//
+				//replaceLiteral 查找与替换都按字面值，没有上述两种问题。
+				s = ..string.replaceLiteral(s, "{" ++ i ++ "}", tostring(args[i]));
 			}
 		}
 

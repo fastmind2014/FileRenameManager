@@ -80,15 +80,18 @@ namespace frename.nameutil{
 	}
 
 	//查找子串首次出现的位置，返回字符索引（0 开始），未找到返回 -1
-	//先用字节级 string.indexOf 定位，再把前缀字节数换算成字符数
+	//
+	//用字面拆分实现：第一个分隔符之前的那一段，其字符数就是索引。
+	//不要用「string.indexOf + string.left」的组合：indexOf 返回的是字节位置，
+	//而 string.left 按字符计数，含中文（一字 3 字节）时会算错位置。
 	charIndexOf = function(s,sub){
 		if(type(s) != "string" || type(sub) != "string") return -1;
 		if(!#s || !#sub) return -1;
 
-		var p = ..string.indexOf(s,sub);
-		if(!p) return -1;
+		var parts = ..string.splitLiteral(s,sub);
+		if(#parts <= 1) return -1;	//没找到
 
-		var n = ..string.len( ..string.left(s,p-1) );
+		var n = ..string.len(parts[1]);
 		if(n === null) return -1;
 		return n;
 	}

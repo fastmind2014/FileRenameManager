@@ -31,9 +31,11 @@
 
 import win.ui;
 import win.ui.minmax;
+import win.ui.tooltip;
 import thread;
 import fsys.dlg;
 import fsys.dlg.dir;
+import fsys.version;
 import frename;
 import frename.filescan;
 import frename.precheck;
@@ -48,8 +50,87 @@ import frename.i18n;
 //默认语言为 English（见 frename.i18n.current；改成 "zh" 即切回中文）。
 var T = ..frename.i18n.t;
 
+//应用版本号。
+//按 aardio 的规则管理：版本号写在工程属性里（default.aproj 的
+//FileVersion / ProductVersion，在 IDE 的「工程 → 属性」中维护），
+//编译发布时会写进 exe 的版本资源。
+//运行时按优先级取：
+//   1. 当前 exe 的版本资源（发布后的程序；开发时 F5 若直接运行临时 exe 也有效）。
+//      仅当确认不是 aardio 自身（IDE 宿主）时才采用，避免读到 aardio.exe 的版本。
+//   2. default.aproj 里的 FileVersion / ProductVersion（开发时 F5 运行也能拿到正确版本）。
+//      用前导 "\" 或 "/" 的 aardio 虚拟绝对路径读取，锚定到「应用程序基准目录」，
+//      工程内运行(F5)即工程根目录。
+//   3. 都取不到时用下面的内置默认值。
+//注意：aardio 条件判断里 if(字符串) 不可靠——形如 "0.0.1.5" 的字符串会被当作
+//数值 0 判为假，所以下面一律用 #长度 判断字符串是否非空。
+var APP_VERSION = "1.0.0";
+
+var extractAprojVersion = function(txt){
+	if(type(txt) != "string" || !#txt) return null;
+	//优先取 ProductVersion，其次 FileVersion（工程属性里两者默认一致）。
+	var v = ..string.match(txt,'ProductVersion="([^"]+)"');
+	if(type(v) != "string" || !#v) v = ..string.match(txt,'FileVersion="([^"]+)"');
+	if(type(v) == "string" && #v) return v;
+	return null;
+}
+
+var findAprojVersion = function(){
+	//前导 "\" 或 "/" 是 aardio「应用级虚拟绝对路径」，锚定到「应用程序基准目录」：
+	//工程内运行(F5)即工程根目录，发布后即 EXE 所在目录。
+	var cands = { "\default.aproj"; "/default.aproj"; "default.aproj"; };
+	for(i=1; #cands; 1){
+		var found = null;
+		try{
+			var p = ..io.fullpath(cands[i]);
+			var ex = ..io.exist(p);
+			if(#p && #ex){
+				var v = extractAprojVersion(..string.load(p));
+				if(#v) found = v;
+			}
+		}
+		catch(e){}
+		//注意：aardio 中 try 块内的 return 不会真正返回函数，必须在 try 之外 return。
+		if(#found) return found;
+	}
+	return null;
+}
+
+var detectVersion = function(){
+	//1. exe 版本资源（发布后；开发时 F5 若直接运行临时 exe 也有效）。
+	//仅在 productName/internalName/originalFileName 里匹配到本程序名时才采用，
+	//避免开发时 F5 读到 aardio.exe（IDE 宿主）的版本。
+	var fromExe = null;
+	try{
+		var vi = ..fsys.version.getInfo(..io._exepath);
+		if(vi && vi.productVersion){
+			var pn = ..string.lower(tostring(vi.productName));
+			var iname = ..string.lower(tostring(vi.internalName));
+			var ofn = ..string.lower(tostring(vi.originalFileName));
+			var isOurs = ..string.indexOf(pn, "filerenamemanager")
+				|| ..string.indexOf(iname, "filerenamemanager")
+				|| ..string.indexOf(ofn, "filerenamemanager");
+			if(isOurs) fromExe = tostring(vi.productVersion);
+		}
+	}
+	catch(e){}
+	if(#fromExe) return fromExe;
+
+	//2. 工程文件里的 FileVersion / ProductVersion（开发时）
+	var fromAproj = null;
+	try{
+		fromAproj = findAprojVersion();
+	}
+	catch(e){}
+	if(#fromAproj) return fromAproj;
+
+	return null;
+}
+
+var _detectedVersion = detectVersion();
+if(#_detectedVersion) APP_VERSION = _detectedVersion;
+
 /*DSG{{*/
-var winform = win.form(text=T("app.title");right=960;bottom=644)
+var winform = win.form(text=T("app.title",APP_VERSION);right=960;bottom=644)
 winform.add(
 lblRules={cls="static";text=T("lbl.rules");left=12;top=12;right=452;bottom=32;z=1};
 cmbRuleType={cls="combobox";left=12;top=36;right=296;bottom=60;edge=1;items={};mode="dropdownlist";z=2};
@@ -119,14 +200,16 @@ var ROW_STEP = 30;        //参数行行距
 var LBL_PARAM_W = 150;    //参数行标签宽度
 var GAP_PARAM = 4;        //参数行标签与输入的间距
 var LBL_PARAMS_H = 26;    //「规则参数：」标题高度
-var HINT_H = 92;          //左下说明区高度（文字会折行，要留够）
+var HINT_H = 180;         //左下说明区高度。180 是当前窗口下的上限：
+                          //再大就会把参数区或规则列表（最小 90）挤到重叠
 var STATUS_H = 28;        //状态栏高度
 var MIN_LIST_H = 90;      //规则列表最小高度
 var MIN_RIGHT_W = 360;    //右侧预览区最小宽度
 
 //客户区最小尺寸，防止窗口缩得过小把布局压坏
+//最小高度按「说明区 180 + 参数区 6 行 176 + 按钮/标题 + 规则列表最小 90」反推得到，约 634，取 640
 var MIN_CLIENT_W = 860;
-var MIN_CLIENT_H = 560;
+var MIN_CLIENT_H = 640;
 
 //---------- 列表列定义 ----------
 
@@ -142,12 +225,12 @@ winform.lvRules.columns = {
 //真实文件预览：完整路径放在最后两列，列宽固定，
 //窗口不够宽时可横向滚动查看，也可以用鼠标双击某一行在状态栏看完整路径。
 winform.lvPreview.columns = {
-	{T("col.prev.orig"),110,0/*_LVCFMT_LEFT*/};
-	{T("col.prev.target"),110,0/*_LVCFMT_LEFT*/};
-	{T("col.prev.status"),60,2/*_LVCFMT_CENTER*/};
-	{T("col.prev.note"),170,0/*_LVCFMT_LEFT*/};
-	{T("col.prev.srcPath"),240,0/*_LVCFMT_LEFT*/};
-	{T("col.prev.dstPath"),240,0/*_LVCFMT_LEFT*/}
+	{T("col.prev.orig"),160,0/*_LVCFMT_LEFT*/};
+	{T("col.prev.target"),160,0/*_LVCFMT_LEFT*/};
+	{T("col.prev.status"),70,2/*_LVCFMT_CENTER*/};
+	{T("col.prev.note"),200,0/*_LVCFMT_LEFT*/};
+	{T("col.prev.srcPath"),250,0/*_LVCFMT_LEFT*/};
+	{T("col.prev.dstPath"),250,0/*_LVCFMT_LEFT*/}
 };
 
 //---------- 常量与静态数据 ----------
@@ -284,6 +367,32 @@ var setStatus = function(text){
 	winform.lblStatus.text = text;
 }
 
+//---------- 列表单元格悬浮提示 ----------
+//listview 自带的 LVS_EX_LABELTIP 只对第一列的截断文本生效，
+//其余列（目标名称、说明、路径）拿不到提示，LVN_GETINFOTIP 在这个环境下也不触发。
+//这里自建一个提示控件，用轻量轮询定位鼠标所在单元格，让所有列都能看到完整文本。
+//
+//每个列表各用一个提示控件 + 一个定时器，互不干扰；
+//只在文本变化时才更新，避免频繁增删 TOOLINFO 导致闪烁。
+
+//给一个列表绑定「hover 显示当前格完整文本」
+var bindCellTip = function(lv){
+	var tip = win.ui.tooltip(winform, { maxTipWidth = 600 });
+	var lastText;
+
+	winform.setInterval(function(){
+		//不带参数时自动取最后一次鼠标消息的位置（屏幕坐标）
+		var row,col = lv.hitTest();
+		var text = (row && col) ? lv.getItemText(row,col) : "";
+
+		if(text == lastText) return;	//没变化就不动，避免闪烁
+		lastText = text;
+
+		//文本为空（鼠标不在单元格上）时传空文本，系统不会弹出提示
+		tip.addTool(lv, text);
+	}, 120);
+}
+
 var typeText = function(t){
 	if(type(t) != "string") return "";
 	var k = RULE_TYPE_TEXTS[t];
@@ -388,19 +497,25 @@ var applyLayout = function(cx,cy){
 	var rightW = cx - rightX - mX;
 	if(rightW < minRightW) rightW = minRightW;
 
-	//垂直：先把贴底的几块固定下来，再由下往上推算
+	//垂直：状态栏固定在底部，说明区固定在参数区下方，
+	//规则列表吃掉中间剩余高度。
+	//这样窗口拉高时说明区不会跟着往下跑，位置稳定、也不会贴到状态栏上。
 	var statusTop = cy - mY - statusH;
-	var hintTop = statusTop - g8y - hintH;
-	var paramsBottom = hintTop - g8y;
 
 	var paramsBlockH = PARAM_ROWS * rowH + (PARAM_ROWS - 1) * (rowStep - rowH);
-	var paramsTop = paramsBottom - paramsBlockH;
-	var lblParamsTop = paramsTop - lblParamsH;
-	var btnTop = lblParamsTop - g8y - btnH;
 
-	//规则列表吃掉中间剩下的高度
-	var listH = btnTop - g8y - listTop;
+	//除规则列表外，其余块高度都是固定的
+	var fixedH = btnH + g8y + lblParamsH + paramsBlockH + g8y + hintH;
+
+	//规则列表顶部位置固定，剩余高度全给它
+	var listH = (statusTop - g8y - listTop) - fixedH;
 	if(listH < minListH) listH = minListH;
+
+	var btnTop = listTop + listH + g8y;
+	var lblParamsTop = btnTop + btnH + g8y;
+	var paramsTop = lblParamsTop + lblParamsH;
+	var paramsBottom = paramsTop + paramsBlockH;
+	var hintTop = paramsBottom + g8y;
 
 	//左列
 	winform.lvRules.setPos(mX,listTop,leftW,listH);
@@ -451,6 +566,11 @@ var applyLayout = function(cx,cy){
 	var langW = 92 * dpiX;
 	winform.lblStatus.setPos(mX,statusTop,cx - mX * 2 - langW - 8 * dpiX,statusH);
 	winform.cmbLang.setPos(cx - mX - langW,statusTop,langW,statusH);
+
+	//控件位置/大小变化后，让整个客户区重绘一次。
+	//否则控件移开后，原位置会残留上一次绘制的内容（最大化时特别明显，
+	//表现为说明区第一行还留在状态栏附近）。
+	winform.invalidate();
 }
 
 //---------- 规则列表 ----------
@@ -878,7 +998,7 @@ var refreshPreviewLater = function(){
 //切换语言后调用它：控件文本、列表列名、规则类型下拉、说明区，
 //以及规则列表「说明」列（来自 frename.rules.description）与预览都会一起更新。
 var applyLanguage = function(){
-	winform.text = T("app.title");
+	winform.text = T("app.title",APP_VERSION);
 
 	winform.lblRules.text = T("lbl.rules");
 	winform.btnAdd.text = T("btn.add");
@@ -902,12 +1022,12 @@ var applyLanguage = function(){
 		{T("col.rules.status"),80,2/*_LVCFMT_CENTER*/}
 	};
 	winform.lvPreview.columns = {
-		{T("col.prev.orig"),110,0/*_LVCFMT_LEFT*/};
-		{T("col.prev.target"),110,0/*_LVCFMT_LEFT*/};
-		{T("col.prev.status"),60,2/*_LVCFMT_CENTER*/};
-		{T("col.prev.note"),170,0/*_LVCFMT_LEFT*/};
-		{T("col.prev.srcPath"),240,0/*_LVCFMT_LEFT*/};
-		{T("col.prev.dstPath"),240,0/*_LVCFMT_LEFT*/}
+		{T("col.prev.orig"),160,0/*_LVCFMT_LEFT*/};
+		{T("col.prev.target"),160,0/*_LVCFMT_LEFT*/};
+		{T("col.prev.status"),70,2/*_LVCFMT_CENTER*/};
+		{T("col.prev.note"),200,0/*_LVCFMT_LEFT*/};
+		{T("col.prev.srcPath"),250,0/*_LVCFMT_LEFT*/};
+		{T("col.prev.dstPath"),250,0/*_LVCFMT_LEFT*/}
 	};
 
 	//规则类型下拉
@@ -926,8 +1046,9 @@ var applyLanguage = function(){
 		++ '\r\n' ++ "3. " ++ T("hint.3")
 		++ '\r\n' ++ "4. " ++ T("hint.4")
 		++ '\r\n' ++ "5. " ++ T("hint.5")
-		++ '\r\n' ++ "6. " ++ T("hint.6", string.join(MOCK_FILES,", "))
-		++ '\r\n' ++ T("hint.6b", tostring(TEST_TIME,"%Y-%m-%d %H:%M:%S"));
+		++ '\r\n' ++ "6. " ++ T("hint.6")
+		++ '\r\n' ++ "7. " ++ T("hint.7", string.join(MOCK_FILES,", "))
+		++ '\r\n' ++ T("hint.7b", tostring(TEST_TIME,"%Y-%m-%d %H:%M:%S"));
 
 	//说明列来自规则引擎、状态列与统计来自预检，都要重刷
 	rebuildRuleList();
@@ -1342,11 +1463,17 @@ winform.cmbLang.onSelChange = function(){
 	setStatus(T("lbl.status.ready"));
 }
 
-//双击预览行：在状态栏显示该行完整路径，避免列宽不够看不全
-winform.lvPreview.onDoubleClick = function(item,subItem,nm){
-	var it = lastPreviewRows[item];
+//单击预览行：在状态栏显示该行完整路径与目标，避免列宽不够看不全。
+//用 selIndex 取值（与 lastPreviewRows 一样是 1 起始）；
+//不要用回调里的 item，那个是 0 起始，会错一行。
+winform.lvPreview.onSelChanged = function(selected,item,subItem,nm){
+	var row = winform.lvPreview.selIndex;
+	if(!row) return;
+
+	var it = lastPreviewRows[row];
 	if(type(it) != "table") return;
-	setStatus(T("preview.dblclick", tostring(it.sourcePath), tostring(it.targetPath)));
+
+	setStatus(T("preview.row", tostring(it.sourcePath), tostring(it.targetPath)));
 }
 
 winform.chkEnabled.oncommand = function(id,event){
@@ -1525,6 +1652,13 @@ for(i=1;PARAM_ROWS;1){
 
 //---------- 初始化 ----------
 
+//默认放入六类规则各一条，全部不启用，由用户自行选择启用哪些
+for(i=1;#RULE_TYPES;1){
+	var ruleType = RULE_TYPES[i].value;
+	..table.push(rules, { type=ruleType; enabled=false; params=defaultParams(ruleType) });
+}
+selRule = 1;
+
 //语言下拉：直接显示语言代码（en / zh），选中当前语言
 var langItems = {};
 for(i=1;#..frename.i18n.LANGS;1){
@@ -1550,6 +1684,10 @@ applyLayout();
 
 //限制窗口最小尺寸，避免缩得过小把控件压重叠
 win.ui.minmax(winform,MIN_CLIENT_W,MIN_CLIENT_H);
+
+//绑定两个列表的悬浮提示（显示当前格完整文本，见 bindCellTip）
+bindCellTip(winform.lvRules);
+bindCellTip(winform.lvPreview);
 
 //返回窗体对象，main.aardio 中的 win.loadForm 会接收此返回值
 return winform;
