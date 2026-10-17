@@ -61,6 +61,7 @@ var T = ..frename.i18n.t;
 //      用前导 "\" 或 "/" 的 aardio 虚拟绝对路径读取，锚定到「应用程序基准目录」，
 //      工程内运行(F5)即工程根目录。
 //   3. 都取不到时用下面的内置默认值。
+//最后统一经 normalizeVersion 归一化，保证 F5(读 aproj) 与发布(读 exe 资源)版本显示一致。
 //注意：aardio 条件判断里 if(字符串) 不可靠——形如 "0.0.1.5" 的字符串会被当作
 //数值 0 判为假，所以下面一律用 #长度 判断字符串是否非空。
 var APP_VERSION = "1.0.0";
@@ -126,8 +127,39 @@ var detectVersion = function(){
 	return null;
 }
 
+//把版本串统一归一化，保证 F5（读 aproj 原文）与发布（读 exe 版本资源）显示一致。
+//exe 版本资源固定 4 段（aproj 的 0.1.0 会被 Windows 写成 0.1.0.0），且 fsys.version 默认
+//tostring 会把末尾补零的段折叠掉（0.1.0.0 -> 0.1）。这里用纯字符串按“第 4 段为 0 显示 3 段、
+//非 0 显示 4 段”归一（不走 fsys.version/tostring，避免其返回 null 把版本号置空）：
+//   0.1.0 / 0.1.0.0 / 0.1  ->  0.1.0
+//   1.2.3.4 / 0.0.1.5     ->  原样（4 段）
+//任何一步出错都原样返回入参，函数绝不返回 null 或空串。
+var normalizeVersion = function(s){
+	if(type(s) != "string" || !#s) return s;
+	var out = s;
+	try{
+		var parts = ..string.splitLiteral(s, ".");
+		var n = #parts;
+		if(n >= 4 && #parts[4] && parts[4] != "0"){
+			out = parts[1] ++ "." ++ parts[2] ++ "." ++ parts[3] ++ "." ++ parts[4];
+		}
+		elseif(n >= 3){
+			out = parts[1] ++ "." ++ parts[2] ++ "." ++ parts[3];
+		}
+		elseif(n == 2){
+			out = parts[1] ++ "." ++ parts[2] ++ ".0";
+		}
+	}
+	catch(e){}
+	if(type(out) != "string" || !#out) out = s;
+	return out;
+}
+
 var _detectedVersion = detectVersion();
-if(#_detectedVersion) APP_VERSION = _detectedVersion;
+if(#_detectedVersion){
+	var _normVersion = normalizeVersion(_detectedVersion);
+	if(#_normVersion) APP_VERSION = _normVersion;
+}
 
 /*DSG{{*/
 var winform = win.form(text=T("app.title",APP_VERSION);right=960;bottom=644)
