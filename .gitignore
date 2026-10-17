@@ -4,3 +4,11 @@
 # 发布输出目录
 dist/
 *.exe
+
+# 测试/调试残留（测试被中断时可能遗留，不应提交）
+*.log
+*.txt.tmp
+frm_*.txt
+out.log
+perf_test_tmp/
+__ran_marker/
