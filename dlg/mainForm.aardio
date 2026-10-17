@@ -1183,6 +1183,15 @@ var executeRename = function(){
 			return;
 		}
 
+		//3.5 可执行操作数为 0（全部被阻止/跳过）：不弹确认框、不执行、不记历史。
+		//     validate 已通过（空计划 errors 为 0），但没有任何可改名的文件，
+		//     此时直接提示，而不是弹出“重命名 0 个文件”的确认框。
+		if(#plan.operations == 0){
+			setStatus(T("exec.nothingToExecute"));
+			winform.msgbox(T("exec.nothingToExecute"), T("dlg.cannotExecute"), 0);
+			return;
+		}
+
 		//4. 用户确认
 		var confirmMsg = T("exec.confirm", #plan.operations);
 		if(#vr.warnings) confirmMsg = confirmMsg ++ T("exec.confirmWarn", #vr.warnings);

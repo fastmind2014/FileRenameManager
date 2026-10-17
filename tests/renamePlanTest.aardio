@@ -207,6 +207,40 @@ expect( t2.warningCount == 1, "T8","链式改名应只有 1 项标记为有风�
 //简单改名没有风险
 expect( t1.warningCount == 0, "T8b","简单改名不应有风险项", "实际=" ++ t1.warningCount );
 
+//================ 七、零操作与部分可执行（执行确认拦截依据）=================
+//mainForm 在执行确认前用「#plan.operations == 0」判断是否拦截：
+//   全部被阻止/跳过 -> operations==0，不弹确认、不执行、不记历史；
+//   部分可执行      -> operations>0 且 blocked>0，照常确认并显示可执行/跳过数。
+//这里验证该判据在两种情况下都准确（不触碰磁盘，存在性由 makeExists 模拟）。
+
+//零操作：混合「未变化 + 非法目标名」两类被阻止项，最终无可执行操作
+var t9 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\a.txt'; targetName="a.txt"; changed=false};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\b?.txt'; targetName="b?.txt"; changed=true};
+	{sourcePath='C:\\t\\c.txt'; targetPath='C:\\t\\c.txt'; targetName="c.txt"; changed=false}
+}, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' }));
+
+expect( #t9.operations == 0, "T9a","全部被阻止时可执行操作数应为 0",
+	"实际=" ++ #t9.operations );
+expect( #t9.blocked == 3, "T9b","全部被阻止时拦截数应为 3",
+	"实际=" ++ #t9.blocked );
+
+//部分可执行：1 个可执行 + 2 个被阻止（1 未变化 + 1 非法目标名）
+var t10 = frename.renameplan.build({
+	{sourcePath='C:\\t\\a.txt'; targetPath='C:\\t\\x.txt'; targetName="x.txt"; changed=true};
+	{sourcePath='C:\\t\\b.txt'; targetPath='C:\\t\\b.txt'; targetName="b.txt"; changed=false};
+	{sourcePath='C:\\t\\c.txt'; targetPath='C:\\t\\c?.txt'; targetName="c?.txt"; changed=true}
+}, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' }));
+
+expect( #t10.operations == 1, "T10a","部分可执行时可执行操作数应为 1",
+	"实际=" ++ #t10.operations );
+expect( #t10.blocked == 2, "T10b","部分可执行时拦截数应为 2",
+	"实际=" ++ #t10.blocked );
+//唯一可执行项应能顺利模拟执行
+var s10 = frename.renameplan.simulate(t10, makeExists({ 'C:\\t\\a.txt'; 'C:\\t\\b.txt'; 'C:\\t\\c.txt' }));
+expect( s10.doneCount == 1 && #s10.failed == 0, "T10c","部分可执行时唯一可执行项应执行成功",
+	"成功=" ++ s10.doneCount ++ " 失败=" ++ #s10.failed );
+
 console.log("---------------------------------------------------------");
 console.log("通过 " ++ passed ++ " 项，失败 " ++ failed ++ " 项");
 console.log("---------------------------------------------------------");

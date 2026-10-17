@@ -251,6 +251,7 @@ namespace frename.i18n{
 		//执行
 		["exec.needFiles"] = "Load files or folders first";
 		["exec.needFilesBox"] = 'No files loaded yet.\r\nPlease click "Load Files" or "Load Folder" first.';
+		["exec.nothingToExecute"] = "No files can be renamed. Resolve the errors and try again.";
 		["exec.validateHead"] = 'Validation failed, cannot execute:\r\n\r\n';
 		["exec.validateStatus"] = "Validation failed: {1} error(s), nothing executed";
 		["exec.confirm"] = "About to rename {1} file(s).";
@@ -533,6 +534,7 @@ namespace frename.i18n{
 
 		["exec.needFiles"] = "请先加载文件或文件夹";
 		["exec.needFilesBox"] = '还没有加载任何文件。\r\n请先点「加载文件」或「加载文件夹」。';
+		["exec.nothingToExecute"] = "没有可重命名的文件。请先处理错误后再试。";
 		["exec.validateHead"] = '校验未通过，不能执行：\r\n\r\n';
 		["exec.validateStatus"] = "校验未通过：错误 {1} 条，未执行任何操作";
 		["exec.confirm"] = "即将重命名 {1} 个文件。";
