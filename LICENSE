@@ -1,0 +1,50 @@
+FileRenameManager License
+Source-Available, Proprietary Terms
+
+Copyright (c) 2026 LiteKitHub. All rights reserved.
+
+1. Scope and Ownership
+
+"Software" means the original source code, documentation, project files, and compiled application for FileRenameManager that are owned by the copyright holder and distributed with this project. Software does not include third-party components that are identified as being subject to separate license terms. Those components remain governed by their respective licenses.
+
+The copyright holder retains all rights in the Software except for the limited permissions expressly granted below.
+
+2. Public Repository and Source Code
+
+The source code may be publicly viewable on GitHub. Viewing the repository and forking it through GitHub are subject to GitHub's Terms of Service and the permissions necessary to use GitHub's platform. Those platform permissions do not grant a general license to exploit the Software outside GitHub.
+
+Except for rights that cannot lawfully be restricted and the platform permissions described above, no permission is granted to use the source code to build, modify, create derivative works of, redistribute, sublicense, sell, or otherwise commercially exploit the Software or any part of its source code without prior written permission from the copyright holder.
+
+No open-source license is granted by this document.
+
+3. Free Use of the FileRenameManager v0.1.0 Binary
+
+For the unmodified FileRenameManager v0.1.0 binary obtained from a release or distribution channel authorized by the copyright holder, the copyright holder grants you a limited, non-exclusive, worldwide, royalty-free license to download, install, and run the application for personal use or internal business use.
+
+This permission is for using the application as an end user. It does not permit you to sell, rent, sublicense, repackage, mirror, redistribute, bundle, or make the binary available as part of another product or service without prior written permission from the copyright holder.
+
+You may not remove or alter copyright, product, or license notices included with the application. You may not reverse engineer, decompile, or disassemble the Software except to the extent such restriction is prohibited by applicable law or permitted by a third-party license that governs a component.
+
+This grant applies to the v0.1.0 binary only. Later versions may be distributed under different terms stated for those versions.
+
+4. Third-Party Components
+
+This license applies only to material owned by the copyright holder. Any bundled third-party component, library, runtime, icon, font, or other asset may be subject to separate terms. Where required, those terms and notices control for the relevant component. Nothing in this document overrides a third-party license.
+
+5. Safe Use and Disclaimer of Warranty
+
+FileRenameManager can rename real files. You are responsible for reviewing the preview, validating the selected files and target names, and maintaining appropriate backups before performing file operations. Preview, rollback, and undo features do not guarantee recovery in every possible failure or filesystem condition.
+
+To the maximum extent permitted by applicable law, the Software is provided "AS IS" and "AS AVAILABLE", without warranties or conditions of any kind, express or implied, including merchantability, fitness for a particular purpose, and non-infringement. To the maximum extent permitted by applicable law, the copyright holder will not be liable for indirect, incidental, special, consequential, or punitive damages, or for loss of data, profits, or business interruption arising from use of or inability to use the Software.
+
+Nothing in this license excludes or limits liability or rights that cannot be excluded or limited under applicable law.
+
+6. Termination
+
+The permissions granted under this license terminate if you materially violate its terms. Upon termination, you must stop the uses that are no longer authorized, subject to rights that cannot lawfully be restricted and any separate rights you hold under applicable third-party licenses.
+
+7. Permissions and Contact
+
+For permissions not expressly granted by this license, including source-code reuse, redistribution, derivative works, or commercial licensing, contact the copyright holder through the contact method published with the project.
+
+If a provision of this license is found unenforceable, the remaining provisions will remain in effect to the maximum extent permitted by law.
