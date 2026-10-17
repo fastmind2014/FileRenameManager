@@ -129,6 +129,10 @@ CASE|I2|1|old.txt|old.txt|true||CUSTOM
    得到 Xphoto.jpg。因此 add_text.go 里 "无效的添加位置" 这个错误分支经 app.go 永远不可达。
 2. E4：start / step / digits 全部缺失时，三个文件都得到 "0"（start=0, step=0 -> 恒为 0）。
 3. F5 vs F1：useFileTime=false 时结果仍是文件修改时间，说明该参数在预览阶段没有被真正使用。
+   【后续修订 · 有意分歧】aardio 版已让 useFileTime 真正生效：
+   useFileTime=true 用文件修改时间（未提供则退回当前时间），useFileTime=false 用当前时间。
+   因此 tests/ruleEngineTest.aardio 的 F5 用例期望值已按新行为改为 photo_<当天日期>.jpg，
+   不再与本基线逐字一致；F1-F4、F6-F8 与原基线一致。详见 lib/frename/_.aardio 头部分歧说明。
 4. D1 / D2 / D9：upper、lower 会连同扩展名一起转换；first、title 不动扩展名。
 5. D5：title 会把连续空白折叠成单个空格。
 6. B5：replace 的 all 范围替换覆盖完整文件名，包含扩展名。

@@ -6,6 +6,14 @@
 // 行为依据（旧版 Wails/Go 项目，只读参考，未修改）：
 //   backend/pkg/rename/engine.go        Engine.Preview / PreviewResult
 //   backend/app.go                      App.PreviewRename（自定义目标优先级、排序后下标即序号）
+//
+//与旧版的有意分歧（唯一的）：
+//   日期时间规则现在真正使用 useFileTime 参数 ——
+//   useFileTime=true  用文件修改时间（文件未提供修改时间时退回当前时间）；
+//   useFileTime=false 用当前时间。
+//   旧版在预览阶段没有使用该参数（useFileTime=false 时仍取文件修改时间），
+//   因此 tests/ruleEngineTest.aardio 的 F5 用例期望值已按新行为调整，
+//   并在 tests/reference/go-baseline.txt 的附注中记录了这次分歧。
 
 import frename.rules;
 import frename.nameutil;
@@ -95,17 +103,18 @@ namespace frename{
 				//旧版 Go 数组下标从 0 开始，序列号直接用这个下标
 				var index = i - 1;
 
-				//时间取值，对应 engine.Preview：
-				//   currentModTime 非零则用文件修改时间，否则用当前时间
-				//注意：旧版并没有用 useFileTime 参数来决定是否取文件时间
-				var t;
+				//文件修改时间（若该文件提供）；未提供时为 null
+				var fileTime = null;
 				if(type(modTime) == "number"){
-					if(modTime != 0) t = ..time(modTime);	//Unix 秒
+					if(modTime != 0) fileTime = ..time(modTime);	//Unix 秒
 				}
 				elseif(modTime !== null){
-					if(..time.is(modTime)) t = modTime;		//已经是 time 对象
+					if(..time.is(modTime)) fileTime = modTime;	//已经是 time 对象
 				}
-				if(t === null) t = nowTime;
+
+				//占位符兜底（非日期时间规则产生 {datetime} 时）用的时间：
+				//有文件修改时间就用它，否则用当前时间
+				var t = (fileTime === null) ? nowTime : fileTime;
 
 				for(k=1;#rules;1){
 					var rule = rules[k];
@@ -153,7 +162,11 @@ namespace frename{
 						dtPos = ..string.indexOf(next,..frename.PLACEHOLDER_DATETIME);
 						if(dtPos){
 							if(ruleType == ..frename.TYPE_DATE_TIME){
-								dtStr = ..frename.rules.formatDateTime(rule,t);
+								//useFileTime 为真：用文件修改时间（文件未提供修改时间时退回当前时间）；
+								//useFileTime 为假：用当前时间（nowTime）。
+								var rt = nowTime;
+								if(..frename.rules.boolParam(rule,"useFileTime") && fileTime !== null) rt = fileTime;
+								dtStr = ..frename.rules.formatDateTime(rule,rt);
 							}
 							else {
 								//旧版兜底：非日期时间规则产生的占位符按 20060102 格式化

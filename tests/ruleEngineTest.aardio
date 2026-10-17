@@ -7,6 +7,10 @@
 // 系统临时目录后，用 go run 实际执行得到的真实输出（旧项目本身未做任何修改）。
 // 下面每个用例的编号与该次执行的 CASE 编号一一对应。
 //
+// 唯一与旧版基线不一致的用例是 F5：日期时间规则的 useFileTime 参数现已真正生效
+// （useFileTime=false 用当前时间，不再取文件修改时间），因此 F5 的期望值按新行为编写，
+// 不再与 go-baseline.txt 逐字一致。详见 lib/frename/_.aardio 头部的分歧说明。
+//
 // 本测试只做名称计算，不读取、创建、修改、移动或删除任何真实文件。
 
 import console;
@@ -270,10 +274,11 @@ var cases = {
 		rules={ {type="date_time";enabled=true;params={format="20060102";position="start";useFileTime=true}} };
 		expect={"20260102_photo.jpg"}; changed={true} };
 
-	//关键点：useFileTime=false 时，旧版仍然使用文件修改时间（该参数在预览阶段未被真正使用）
+	//useFileTime=false：改用当前时间（而非文件修改时间）。
+	//此处为与旧版 Go 基线的有意分歧——旧版未真正使用该参数，见 _.aardio 头部说明。
 	{ id="F5"; files={ {name="photo.jpg";modTime=MOD_TS} };
 		rules={ {type="date_time";enabled=true;params={format="20060102";position="end";useFileTime=false}} };
-		expect={"photo_20260102.jpg"}; changed={true} };
+		expect={"photo_" ++ TODAY ++ ".jpg"}; changed={true} };
 
 	//无修改时间：退回当前时间
 	{ id="F6"; files={ {name="photo.jpg";modTime=0} };
@@ -283,6 +288,11 @@ var cases = {
 	{ id="F7"; files={ {name="a.jpg";modTime=MOD_TS}; {name="b.jpg";modTime=MOD_TS} };
 		rules={ {type="date_time";enabled=true;params={format="2006-01-02";position="end";useFileTime=true}} };
 		expect={"a_2026-01-02.jpg";"b_2026-01-02.jpg"}; changed={true;true} };
+
+	//useFileTime=true 但文件未提供修改时间：退回当前时间
+	{ id="F8"; files={ {name="photo.jpg";modTime=0} };
+		rules={ {type="date_time";enabled=true;params={format="20060102";position="end";useFileTime=true}} };
+		expect={"photo_" ++ TODAY ++ ".jpg"}; changed={true} };
 
 	//================ 七、串行执行 / 禁用 / 组合 =================
 	{ id="G1"; files={"hello world.txt"};
